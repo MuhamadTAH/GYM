@@ -13,15 +13,21 @@ import {
   Volume2,
   VolumeX,
   Radio,
+  Play,
+  Calendar,
+  Dumbbell,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
   triggerManualHardStopAction,
   fetchRecentSetsAction,
+  getTodaysWorkoutAction,
   type LoggedSetResponse,
+  type TodaysWorkoutView,
 } from "@/app/actions";
 import type { ArbitrationResult } from "@/lib/arbitration";
 import type { ExecutionDirective } from "@/lib/coach";
+import type { PlannedExercise } from "@/lib/planner";
 import { AudioCuePlayer, useAudioCue } from "./audio-cue";
 
 interface RecentSetDisplay {
@@ -44,6 +50,7 @@ export function ShorthandLogger() {
   const [userOverride, setUserOverride] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
+  const [todaysWorkout, setTodaysWorkout] = useState<TodaysWorkoutView | null>(null);
   const [lastResponse, setLastResponse] = useState<LoggedSetResponse | null>(null);
   const [activeDirective, setActiveDirective] = useState<ExecutionDirective | null>(null);
   const [arbitrationState, setArbitrationState] = useState<ArbitrationResult | null>(null);
@@ -53,7 +60,7 @@ export function ShorthandLogger() {
 
   const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
 
-  // Load recent sets on mount
+  // Load today's workout and recent sets on mount
   useEffect(() => {
     fetchRecentSetsAction().then((sets) => {
       if (sets && sets.length > 0) {
@@ -63,7 +70,30 @@ export function ShorthandLogger() {
         setPreferredUnit(sets[0].loadUnit as "kg" | "lb");
       }
     });
+
+    getTodaysWorkoutAction().then((tw) => {
+      if (tw) {
+        setTodaysWorkout(tw);
+        if (tw.exercises.length > 0) {
+          const firstEx = tw.exercises[0];
+          setActiveExercise(firstEx.exerciseName);
+          setCurrentLoad(firstEx.targetLoad);
+          setPreferredUnit(firstEx.loadUnit);
+        }
+      }
+    });
   }, []);
+
+  // Handler to pre-populate shorthand input with next prescribed set
+  const handleStartNextSet = (ex: PlannedExercise) => {
+    setActiveExercise(ex.exerciseName);
+    setCurrentLoad(ex.targetLoad);
+    setPreferredUnit(ex.loadUnit);
+    setInput(
+      `${ex.exerciseName.replace(/_/g, " ")} ${ex.targetLoad}${ex.loadUnit} 1x${ex.targetReps} @ ${ex.targetRpe}`
+    );
+    inputRef.current?.focus();
+  };
 
   // Quick adjust load
   const adjustLoad = (delta: number) => {
@@ -142,7 +172,7 @@ export function ShorthandLogger() {
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-emerald-400 animate-pulse" />
           <span className="text-xs font-mono tracking-wider uppercase text-zinc-400">
-            Gym HUD • Telemetry Online
+            Gym HUD • Live Gym Floor
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -216,7 +246,50 @@ export function ShorthandLogger() {
           </div>
         )}
 
-      {/* ACTIVE EXERCISE CARD */}
+      {/* TODAY'S PRESCRIBED SESSION CARD */}
+      {todaysWorkout && (
+        <section className="mt-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
+          <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/80">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
+                Today&apos;s Prescribed Session
+              </h2>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 font-bold uppercase">
+              {todaysWorkout.sessionName}
+            </span>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {todaysWorkout.exercises.map((ex, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs font-mono"
+              >
+                <div>
+                  <span className="font-bold text-zinc-200 capitalize block">
+                    {ex.exerciseName.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-zinc-400 text-[11px]">
+                    Target: <strong className="text-white">{ex.targetLoad}{ex.loadUnit}</strong> • {ex.targetSets} sets × {ex.targetReps} reps @ RPE {ex.targetRpe}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleStartNextSet(ex)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1 transition active:scale-95"
+                >
+                  <Play className="w-3 h-3 fill-current" />
+                  Load
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ACTIVE MOVEMENT CARD */}
       <section className="mt-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
         <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
           <span>CURRENT MOVEMENT</span>

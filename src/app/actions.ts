@@ -11,6 +11,17 @@ import {
   type ExecutionDirective,
   type CoachGeneratorInput,
 } from "@/lib/coach";
+import {
+  generateDeterministicMesocycle,
+  type PlannerGoal,
+  type SplitType,
+  type PlannedExercise,
+} from "@/lib/planner";
+import {
+  calculateMacroTargets,
+  type NutritionGoal,
+  type MacroBreakdown,
+} from "@/lib/nutrition";
 
 export interface LoggedSetResponse {
   success: boolean;
@@ -291,3 +302,197 @@ export async function generateCoachDirectiveAction(
 ): Promise<ExecutionDirective> {
   return generateExecutionDirective(input);
 }
+
+export interface TodaysWorkoutView {
+  sessionId: string;
+  sessionName: string;
+  sessionType: string;
+  status: "planned" | "in_progress" | "completed" | "aborted";
+  isRestDay: boolean;
+  exercises: PlannedExercise[];
+  weekNumber: number;
+  dayIndex: number;
+}
+
+/**
+ * Generates a 4-week block and seeds sessions into workout_sessions
+ */
+export async function generateNewMesocycleAction(params?: {
+  primaryGoal?: PlannerGoal;
+  split?: SplitType;
+  daysPerWeek?: number;
+}) {
+  const sessionContext = await getOrCreateActiveSession();
+  const { userId, preferredUnit } = sessionContext;
+
+  const users = await db.select().from(userProfiles).where(eq(userProfiles.id, userId)).limit(1);
+  if (users.length === 0) {
+    throw new Error("User profile not found");
+  }
+
+  const user = users[0];
+  const goal: PlannerGoal = params?.primaryGoal || "hypertrophy";
+  const split: SplitType = params?.split || "push_pull_legs";
+  const days = params?.daysPerWeek || 4;
+
+  const mesocycle = generateDeterministicMesocycle({
+    userId,
+    primaryGoal: goal,
+    split,
+    daysPerWeek: days,
+    preferredUnit,
+    bodyWeightKg: user.currentWeightValue,
+    baselineLifts: user.baselineLifts,
+    activeInjuries: user.activeInjuries,
+    coldStartActive: user.coldStartActive,
+  });
+
+  // Seed sessions into gym.db
+  for (let i = 0; i < mesocycle.sessions.length; i++) {
+    const s = mesocycle.sessions[i];
+    await db.insert(workoutSessions).values({
+      id: s.id,
+      userId,
+      sessionName: s.sessionName,
+      sessionType: s.sessionType,
+      status: i === 0 ? "in_progress" : "planned",
+      startedAt: new Date(Date.now() + (s.dayIndex - 1) * 86400000).toISOString(),
+      elapsedMinutes: 0,
+      arbitrationHardStop: false,
+      arbitrationDecision: "MAINTAIN",
+      resolvedLoadModifier: 1.0,
+      resolvedVolumeModifier: 1.0,
+      activeDownRegulations: [],
+      userOverrideActive: false,
+      sessionNotes: JSON.stringify(s.exercises),
+    });
+  }
+
+  return {
+    success: true,
+    mesocycleId: mesocycle.id,
+    totalSessions: mesocycle.sessions.length,
+    workoutSessionsCount: mesocycle.sessions.filter((s) => !s.isRestDay).length,
+  };
+}
+
+/**
+ * Fetches today's planned or active session with exercises
+ */
+export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
+  const sessionContext = await getOrCreateActiveSession();
+  const { userId, preferredUnit } = sessionContext;
+
+  // Check for existing active or planned session
+  const activeSessions = await db
+    .select()
+    .from(workoutSessions)
+    .where(eq(workoutSessions.userId, userId))
+    .orderBy(desc(workoutSessions.startedAt))
+    .limit(1);
+
+  if (activeSessions.length > 0 && activeSessions[0].sessionNotes) {
+    try {
+      const exercises: PlannedExercise[] = JSON.parse(activeSessions[0].sessionNotes);
+      return {
+        sessionId: activeSessions[0].id,
+        sessionName: activeSessions[0].sessionName,
+        sessionType: activeSessions[0].sessionType,
+        status: activeSessions[0].status as TodaysWorkoutView["status"],
+        isRestDay: activeSessions[0].sessionType === "rest",
+        exercises,
+        weekNumber: 1,
+        dayIndex: 1,
+      };
+    } catch {
+      // fallback to generated
+    }
+  }
+
+  // Generate fallback session
+  const users = await db.select().from(userProfiles).where(eq(userProfiles.id, userId)).limit(1);
+  const baselineLifts = users.length > 0 ? users[0].baselineLifts : {
+    squat_1rm: 140,
+    bench_press_1rm: 100,
+    deadlift_1rm: 180,
+    overhead_press_1rm: 65,
+    barbell_row_1rm: 85,
+    pull_up_1rm: 30,
+  };
+
+  const mesocycle = generateDeterministicMesocycle({
+    userId,
+    primaryGoal: "hypertrophy",
+    split: "push_pull_legs",
+    daysPerWeek: 4,
+    preferredUnit,
+    bodyWeightKg: users.length > 0 ? users[0].currentWeightValue : 80,
+    baselineLifts,
+    coldStartActive: false,
+  });
+
+  const firstWorkout = mesocycle.sessions.find((s) => !s.isRestDay) || mesocycle.sessions[0];
+
+  return {
+    sessionId: sessionContext.sessionId,
+    sessionName: firstWorkout.sessionName,
+    sessionType: firstWorkout.sessionType,
+    status: "in_progress",
+    isRestDay: firstWorkout.isRestDay,
+    exercises: firstWorkout.exercises,
+    weekNumber: firstWorkout.weekNumber,
+    dayIndex: firstWorkout.dayIndex,
+  };
+}
+
+/**
+ * Computes live BMR, TDEE, and macro breakdown for user profile
+ */
+export async function getNutritionOverviewAction(goal: NutritionGoal = "maintain"): Promise<{
+  success: boolean;
+  nutrition: MacroBreakdown | null;
+  userName: string;
+  weightKg: number;
+  heightCm: number;
+  preferredUnit: "kg" | "lb";
+}> {
+  const sessionContext = await getOrCreateActiveSession();
+  const { userId, preferredUnit } = sessionContext;
+
+  const users = await db.select().from(userProfiles).where(eq(userProfiles.id, userId)).limit(1);
+  if (users.length === 0) {
+    return {
+      success: false,
+      nutrition: null,
+      userName: "Athlete",
+      weightKg: 80,
+      heightCm: 178,
+      preferredUnit,
+    };
+  }
+
+  const user = users[0];
+  const weightKg =
+    user.preferredUnit === "lb"
+      ? Math.round(user.currentWeightValue * 0.453592 * 10) / 10
+      : user.currentWeightValue;
+
+  const nutrition = calculateMacroTargets({
+    weightKg,
+    heightCm: user.heightCm,
+    ageYears: user.age,
+    sex: user.sex as "male" | "female" | "other",
+    activityLevel: "moderately_active",
+    goal,
+  });
+
+  return {
+    success: true,
+    nutrition,
+    userName: user.name,
+    weightKg,
+    heightCm: user.heightCm,
+    preferredUnit: user.preferredUnit,
+  };
+}
+
