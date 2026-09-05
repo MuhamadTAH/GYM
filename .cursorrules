@@ -1,0 +1,52 @@
+# OPTIMUM VIBE-CODING PROJECT RULES (GYM PLATFORM)
+
+## 1. Core Architecture & Tech Stack
+- **Full-Stack TypeScript**: Strict types on all layers. No fumbling between Python and JS.
+- **Framework**: Next.js (App Router) in `src/`.
+- **Database**: SQLite via Drizzle ORM and `@libsql/client` (`file:gym.db`).
+- **Connection Singleton**: Always use `globalThis.db` and `globalThis.client` in `src/db/index.ts` to prevent `SQLITE_BUSY` locks during Next.js dev server HMR.
+- **Validation**: Zod runtime validation enforcing the Master State Schema (`src/schemas/fitness.ts`).
+- **UI Components**: shadcn/ui + Tailwind CSS.
+- **Testing**: Vitest (`pnpm test`).
+
+## 2. Non-Negotiable Math Law
+> **The LLM must NEVER perform arithmetic for 1RMs, calories, or overload.**
+> Always call deterministic functions in `/src/lib/math.ts`.
+
+- **1RM Calculation**: Must use the Brzycki formula:
+  $$\text{1RM} = \text{weight} \times \frac{36}{37 - \text{reps}}$$
+- **Calories**: Deterministic calculation using MET values, body weight, and volume load.
+- **Overload**: Strict algorithmic qualification rules based on completed sets, reps, and RPE.
+
+## 3. Layer 0 Arbitration Priority Order
+The arbitration priority is strictly ordered and non-negotiable:
+$$\text{Hard Stop} \succ \text{Down-Regulator} \succ \text{Context} \succ \text{Overload}$$
+
+1. **Hard Stop (P0 - Immediate Abort)**:
+   - Acute pain flag, joint compromise, popping sensation, dizziness, structural failure.
+   - An acute pain flag forces an immediate abort even if progressive overload is 100% prescribed.
+2. **Down-Regulator (P1 - Load & Volume Reduction)**:
+   - High CNS fatigue, severe DOMS, poor sleep (< 6 hrs, quality < 5/10), missed reps.
+   - Downscales load (e.g. -10% to -20%) and volume.
+3. **Context (P2 - Environmental Adaptations)**:
+   - Time remaining < 20 min, equipment occupied/unavailable.
+   - Triggers exercise swap or superset adaptation without compromising safety.
+4. **Overload (P3 - Progressive Overload Execution)**:
+   - Only evaluated and executed if Layers 0, 1, and 2 are clear.
+
+## 4. Master 10-Layer State Schema
+All application state conforms to `MasterFitnessStateSchema` in `src/schemas/fitness.ts`:
+- Layer 0: Safety & Arbitration (`Layer0SafetySchema`)
+- Layer 1: Biometric Baseline & Profile (`Layer1UserProfileSchema`)
+- Layer 2: Macro-Cycle Periodization (`Layer2PeriodizationSchema`)
+- Layer 3: Daily Readiness & Down-Regulator (`Layer3ReadinessSchema`)
+- Layer 4: Active Session Telemetry (`Layer4SessionMetaSchema`)
+- Layer 5: Exercise & Set Execution Log (`Layer5ExecutionSchema`)
+- Layer 6: Gym-Floor Shorthand Parser (`Layer6ShorthandSchema`)
+- Layer 7: Contextual Floor Constraints (`Layer7ContextSchema`)
+- Layer 8: Deterministic Math & Overload Engine (`Layer8MathOverloadSchema`)
+- Layer 9: Sub-30-Word Execution Mode Directives (`Layer9ExecutionCoachSchema`)
+
+## 5. Execution Mode Coach Directives (Sub-30 Words)
+- Every gym-floor directive must be $\le 30$ words.
+- High-urgency, punchy, actionable directives suitable for audio cues or glanceable mobile display.
