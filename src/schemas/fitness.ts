@@ -252,6 +252,8 @@ export const MovementPatternEnum = z.enum([
   "isolation",
   "carry_core",
 ]);
+export type MovementPattern = z.infer<typeof MovementPatternEnum>;
+
 export const SetTypeEnum = z.enum([
   "warmup",
   "working",
