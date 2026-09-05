@@ -9,8 +9,10 @@ import {
   Activity,
   Plus,
   Minus,
-  RotateCcw,
   ShieldAlert,
+  Volume2,
+  VolumeX,
+  Radio,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
@@ -19,6 +21,8 @@ import {
   type LoggedSetResponse,
 } from "@/app/actions";
 import type { ArbitrationResult } from "@/lib/arbitration";
+import type { ExecutionDirective } from "@/lib/coach";
+import { AudioCuePlayer, useAudioCue } from "./audio-cue";
 
 interface RecentSetDisplay {
   id: string;
@@ -38,11 +42,16 @@ export function ShorthandLogger() {
   const [currentLoad, setCurrentLoad] = useState<number>(100);
   const [preferredUnit, setPreferredUnit] = useState<"kg" | "lb">("kg");
   const [userOverride, setUserOverride] = useState(false);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+
   const [lastResponse, setLastResponse] = useState<LoggedSetResponse | null>(null);
+  const [activeDirective, setActiveDirective] = useState<ExecutionDirective | null>(null);
   const [arbitrationState, setArbitrationState] = useState<ArbitrationResult | null>(null);
   const [recentSets, setRecentSets] = useState<RecentSetDisplay[]>([]);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
 
   // Load recent sets on mount
   useEffect(() => {
@@ -60,7 +69,6 @@ export function ShorthandLogger() {
   const adjustLoad = (delta: number) => {
     const next = Math.max(0, Math.round((currentLoad + delta) * 10) / 10);
     setCurrentLoad(next);
-    // Auto-update or suggest in shorthand
     setInput((prev) => {
       if (!prev) {
         return `${activeExercise.replace(/_/g, " ")} ${next}${preferredUnit} 1x5 rpe8`;
@@ -84,6 +92,11 @@ export function ShorthandLogger() {
         setCurrentLoad(res.parsed.load_value);
         setPreferredUnit(res.parsed.load_unit);
         setArbitrationState(res.arbitration ?? null);
+
+        if (res.coachDirective) {
+          setActiveDirective(res.coachDirective);
+        }
+
         setInput(""); // auto-clear on success
         inputRef.current?.focus();
 
@@ -101,16 +114,29 @@ export function ShorthandLogger() {
     startTransition(async () => {
       const arb = await triggerManualHardStopAction("Emergency Gym Floor Manual Stop");
       setArbitrationState(arb);
+      const emergencyDirective: ExecutionDirective = {
+        urgency: "CRITICAL",
+        directive_text: "HALT EXERCISE IMMEDIATELY. Unrack safely. Do not continue this movement.",
+        word_count: 10,
+        audio_cue_text: "HALT EXERCISE IMMEDIATELY. Unrack safely. Do not continue this movement.",
+        cue_category: "safety",
+        timestamp: new Date().toISOString(),
+      };
+      setActiveDirective(emergencyDirective);
       setLastResponse({
         success: false,
         message: "EMERGENCY HARD STOP ACTIVATED. Session paused. Do not lift.",
         arbitration: arb,
+        coachDirective: emergencyDirective,
       });
     });
   };
 
   return (
     <div className="w-full max-w-md mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-4 pb-20 select-none">
+      {/* Audio Dispatcher */}
+      <AudioCuePlayer directive={activeDirective} isEnabled={isAudioEnabled} />
+
       {/* Top Telemetry Header */}
       <header className="flex items-center justify-between pb-3 border-b border-zinc-800">
         <div className="flex items-center gap-2">
@@ -120,11 +146,35 @@ export function ShorthandLogger() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Audio Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsAudioEnabled((prev) => !prev)}
+            aria-label={isAudioEnabled ? "Mute audio cues" : "Unmute audio cues"}
+            className={`p-1.5 rounded-lg border transition flex items-center gap-1 text-xs font-mono ${
+              isAudioEnabled
+                ? "bg-emerald-950/70 border-emerald-700 text-emerald-300"
+                : "bg-zinc-900 border-zinc-800 text-zinc-500"
+            }`}
+          >
+            {isAudioEnabled ? (
+              <>
+                <Volume2 className="w-4 h-4" />
+                <span className="text-[10px] uppercase font-bold">Audio ON</span>
+              </>
+            ) : (
+              <>
+                <VolumeX className="w-4 h-4" />
+                <span className="text-[10px] uppercase font-bold">Mute</span>
+              </>
+            )}
+          </button>
+
           <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-            Unit: {preferredUnit.toUpperCase()}
+            {preferredUnit.toUpperCase()}
           </span>
           {userOverride && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+            <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
               OVERRIDE
             </span>
           )}
@@ -253,6 +303,52 @@ export function ShorthandLogger() {
           </button>
         </div>
       </form>
+
+      {/* SUB-30-WORD ACTIVE COACHING DIRECTIVE CARD */}
+      {activeDirective && (
+        <section
+          className={`mt-4 p-4 rounded-2xl border transition-all shadow-lg ${
+            activeDirective.urgency === "CRITICAL"
+              ? "bg-red-950/80 border-red-500 text-red-100"
+              : activeDirective.urgency === "ADAPT"
+              ? "bg-amber-950/70 border-amber-500 text-amber-100"
+              : "bg-zinc-900/95 border-emerald-500/70 text-zinc-100"
+          }`}
+        >
+          <div className="flex items-center justify-between pb-2 border-b border-zinc-800/50">
+            <div className="flex items-center gap-2">
+              <Radio
+                className={`w-4 h-4 animate-pulse ${
+                  activeDirective.urgency === "CRITICAL"
+                    ? "text-red-400"
+                    : activeDirective.urgency === "ADAPT"
+                    ? "text-amber-400"
+                    : "text-emerald-400"
+                }`}
+              />
+              <span className="text-[11px] font-mono font-black uppercase tracking-wider">
+                Execution Directive • {activeDirective.urgency}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-400">
+                {activeDirective.word_count} words
+              </span>
+              <button
+                type="button"
+                onClick={() => speakDirective(activeDirective)}
+                title="Speak directive"
+                className="p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          <p className="mt-2 text-sm font-mono font-bold leading-relaxed">
+            {activeDirective.directive_text}
+          </p>
+        </section>
+      )}
 
       {/* FEEDBACK STATUS MESSAGE */}
       {lastResponse && (

@@ -6,6 +6,11 @@ import { eq, desc } from "drizzle-orm";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
 import { calculateBrzycki1RM } from "@/lib/math";
+import {
+  generateExecutionDirective,
+  type ExecutionDirective,
+  type CoachGeneratorInput,
+} from "@/lib/coach";
 
 export interface LoggedSetResponse {
   success: boolean;
@@ -17,6 +22,7 @@ export interface LoggedSetResponse {
   activeSessionId?: string;
   exerciseName?: string;
   nextRecommendedLoad?: number;
+  coachDirective?: ExecutionDirective;
 }
 
 /**
@@ -198,6 +204,18 @@ export async function submitShorthandSetAction(
     const firstRep = parsed.reps_per_set[0] || 1;
     const e1RM = calculateBrzycki1RM(parsed.load_value, firstRep);
 
+    // 7. Generate Sub-30-Word Coaching Directive
+    const coachDirective = await generateExecutionDirective({
+      exercise_name: parsed.exercise_name,
+      movement_pattern: parsed.movement_pattern,
+      current_load: parsed.load_value,
+      load_unit: parsed.load_unit,
+      target_reps: parsed.reps_per_set[0] || 5,
+      target_rpe: parsed.rpe || 8.0,
+      rest_seconds: 180,
+      arbitration,
+    });
+
     return {
       success: true,
       message: arbitration.hard_stop_active
@@ -209,6 +227,7 @@ export async function submitShorthandSetAction(
       savedSetsCount: parsed.sets.length,
       activeSessionId: sessionId,
       exerciseName: parsed.exercise_name,
+      coachDirective,
     };
   } catch (error) {
     console.error("Error submitting shorthand set:", error);
@@ -262,4 +281,13 @@ export async function fetchRecentSetsAction() {
     .limit(10);
 
   return sets;
+}
+
+/**
+ * Generate sub-30-word coaching directive for an exercise
+ */
+export async function generateCoachDirectiveAction(
+  input: CoachGeneratorInput
+): Promise<ExecutionDirective> {
+  return generateExecutionDirective(input);
 }
