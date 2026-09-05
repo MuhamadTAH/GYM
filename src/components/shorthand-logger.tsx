@@ -16,19 +16,30 @@ import {
   Play,
   Calendar,
   Dumbbell,
+  ArrowLeftRight,
+  FastForward,
+  User,
+  Sparkles,
+  Trophy,
+  X,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
   triggerManualHardStopAction,
   fetchRecentSetsAction,
   getTodaysWorkoutAction,
+  completeWorkoutSessionAction,
+  swapSessionOrderAction,
+  skipRestDayAction,
   type LoggedSetResponse,
   type TodaysWorkoutView,
+  type AutoregulationAdjustment,
 } from "@/app/actions";
 import type { ArbitrationResult } from "@/lib/arbitration";
 import type { ExecutionDirective } from "@/lib/coach";
 import type { PlannedExercise } from "@/lib/planner";
 import { AudioCuePlayer, useAudioCue } from "./audio-cue";
+import { ProfileModal } from "./profile-modal";
 
 interface RecentSetDisplay {
   id: string;
@@ -58,7 +69,30 @@ export function ShorthandLogger() {
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Profile Modal & Session Completion State
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [completionResult, setCompletionResult] = useState<{
+    message: string;
+    adjustments: AutoregulationAdjustment[];
+  } | null>(null);
+  const [statusMessage, setStatusMessage] = useState("");
+
   const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
+
+  // Reload today's workout
+  const refreshWorkout = () => {
+    getTodaysWorkoutAction().then((tw) => {
+      if (tw) {
+        setTodaysWorkout(tw);
+        if (tw.exercises.length > 0) {
+          const firstEx = tw.exercises[0];
+          setActiveExercise(firstEx.exerciseName);
+          setCurrentLoad(firstEx.targetLoad);
+          setPreferredUnit(firstEx.loadUnit);
+        }
+      }
+    });
+  };
 
   // Load today's workout and recent sets on mount
   useEffect(() => {
@@ -71,17 +105,7 @@ export function ShorthandLogger() {
       }
     });
 
-    getTodaysWorkoutAction().then((tw) => {
-      if (tw) {
-        setTodaysWorkout(tw);
-        if (tw.exercises.length > 0) {
-          const firstEx = tw.exercises[0];
-          setActiveExercise(firstEx.exerciseName);
-          setCurrentLoad(firstEx.targetLoad);
-          setPreferredUnit(firstEx.loadUnit);
-        }
-      }
-    });
+    refreshWorkout();
   }, []);
 
   // Handler to pre-populate shorthand input with next prescribed set
@@ -139,70 +163,118 @@ export function ShorthandLogger() {
     });
   };
 
-  // One-tap Manual Hard Stop (Big Red Button)
+  // Complete session & trigger progressive overload once
+  const handleCompleteSession = () => {
+    if (!todaysWorkout) return;
+    startTransition(async () => {
+      const res = await completeWorkoutSessionAction(todaysWorkout.sessionId);
+      if (res.success) {
+        setCompletionResult({
+          message: res.message,
+          adjustments: res.adjustmentsMade,
+        });
+        refreshWorkout();
+      }
+    });
+  };
+
+  // Day Swapping: Swap order with next session
+  const handleSwapOrder = () => {
+    if (!todaysWorkout || !todaysWorkout.nextSession) return;
+    startTransition(async () => {
+      const res = await swapSessionOrderAction(
+        todaysWorkout.sessionId,
+        todaysWorkout.nextSession!.sessionId
+      );
+      if (res.success) {
+        setStatusMessage(res.message);
+        setTimeout(() => setStatusMessage(""), 3000);
+        refreshWorkout();
+      }
+    });
+  };
+
+  // Skip rest day and activate next workout
+  const handleSkipRest = () => {
+    if (!todaysWorkout) return;
+    startTransition(async () => {
+      const res = await skipRestDayAction(todaysWorkout.sessionId);
+      if (res.success) {
+        setStatusMessage(res.message);
+        setTimeout(() => setStatusMessage(""), 3000);
+        refreshWorkout();
+      }
+    });
+  };
+
+  // Trigger manual Hard Stop
   const handleEmergencyHardStop = () => {
     startTransition(async () => {
-      const arb = await triggerManualHardStopAction("Emergency Gym Floor Manual Stop");
+      const arb = await triggerManualHardStopAction("Emergency Stop Triggered by Athlete");
       setArbitrationState(arb);
-      const emergencyDirective: ExecutionDirective = {
+      const haltDirective: ExecutionDirective = {
         urgency: "CRITICAL",
         directive_text: "HALT EXERCISE IMMEDIATELY. Unrack safely. Do not continue this movement.",
         word_count: 10,
-        audio_cue_text: "HALT EXERCISE IMMEDIATELY. Unrack safely. Do not continue this movement.",
+        audio_cue_text: "Halt exercise immediately. Unrack safely.",
         cue_category: "safety",
         timestamp: new Date().toISOString(),
       };
-      setActiveDirective(emergencyDirective);
-      setLastResponse({
-        success: false,
-        message: "EMERGENCY HARD STOP ACTIVATED. Session paused. Do not lift.",
-        arbitration: arb,
-        coachDirective: emergencyDirective,
-      });
+      setActiveDirective(haltDirective);
     });
   };
 
   return (
     <div className="w-full max-w-md mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-4 pb-20 select-none">
-      {/* Audio Dispatcher */}
-      <AudioCuePlayer directive={activeDirective} isEnabled={isAudioEnabled} />
+      {/* Profile & 1RMs Modal */}
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        onSaved={refreshWorkout}
+      />
 
-      {/* Top Telemetry Header */}
+      {/* Header */}
       <header className="flex items-center justify-between pb-3 border-b border-zinc-800">
         <div className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-emerald-400 animate-pulse" />
+          <Activity className="w-5 h-5 text-emerald-400" />
           <span className="text-xs font-mono tracking-wider uppercase text-zinc-400">
             Gym HUD • Live Gym Floor
           </span>
         </div>
+
         <div className="flex items-center gap-2">
-          {/* Audio Toggle Button */}
+          {/* Audio toggle button */}
           <button
             type="button"
             onClick={() => setIsAudioEnabled((prev) => !prev)}
-            aria-label={isAudioEnabled ? "Mute audio cues" : "Unmute audio cues"}
-            className={`p-1.5 rounded-lg border transition flex items-center gap-1 text-xs font-mono ${
+            className={`p-1.5 rounded-lg border transition ${
               isAudioEnabled
-                ? "bg-emerald-950/70 border-emerald-700 text-emerald-300"
-                : "bg-zinc-900 border-zinc-800 text-zinc-500"
+                ? "bg-zinc-800 border-zinc-700 text-emerald-400 hover:text-emerald-300"
+                : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-400"
             }`}
+            title={isAudioEnabled ? "Mute audio cues" : "Unmute audio cues"}
           >
             {isAudioEnabled ? (
-              <>
-                <Volume2 className="w-4 h-4" />
-                <span className="text-[10px] uppercase font-bold">Audio ON</span>
-              </>
+              <Volume2 className="w-3.5 h-3.5" />
             ) : (
-              <>
-                <VolumeX className="w-4 h-4" />
-                <span className="text-[10px] uppercase font-bold">Mute</span>
-              </>
+              <VolumeX className="w-3.5 h-3.5" />
             )}
+          </button>
+
+          {/* Athlete Profile / 1RMs Button */}
+          <button
+            type="button"
+            onClick={() => setIsProfileOpen(true)}
+            className="text-[10px] font-mono px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1 transition cursor-pointer"
+          >
+            <User className="w-3 h-3 text-emerald-400" />
+            1RMs
           </button>
 
           <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
             {preferredUnit.toUpperCase()}
           </span>
+
           {userOverride && (
             <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
               OVERRIDE
@@ -210,6 +282,13 @@ export function ShorthandLogger() {
           )}
         </div>
       </header>
+
+      {/* STATUS BANNER */}
+      {statusMessage && (
+        <div className="mt-3 p-2.5 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-200 text-xs font-mono text-center font-bold">
+          {statusMessage}
+        </div>
+      )}
 
       {/* LAYER 0 ARBITRATION ALERT BANNER */}
       {arbitrationState && arbitrationState.hard_stop_active && (
@@ -261,32 +340,150 @@ export function ShorthandLogger() {
             </span>
           </div>
 
-          <div className="mt-3 space-y-2">
-            {todaysWorkout.exercises.map((ex, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs font-mono"
+          {/* REST DAY CARD */}
+          {todaysWorkout.isRestDay ? (
+            <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
+              <div className="flex items-center justify-center gap-2 text-indigo-400 font-bold text-sm">
+                <Sparkles className="w-4 h-4" />
+                <span>Scheduled Rest & Recovery Day</span>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Muscular recovery and glycogen resynthesis are active.
+                {todaysWorkout.nextSession && (
+                  <span className="block mt-1 text-zinc-300">
+                    Next up: <strong>{todaysWorkout.nextSession.sessionName}</strong> ({todaysWorkout.nextSession.exerciseCount} exercises)
+                  </span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={handleSkipRest}
+                className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 transition"
               >
-                <div>
-                  <span className="font-bold text-zinc-200 capitalize block">
-                    {ex.exerciseName.replace(/_/g, " ")}
-                  </span>
-                  <span className="text-zinc-400 text-[11px]">
-                    Target: <strong className="text-white">{ex.targetLoad}{ex.loadUnit}</strong> • {ex.targetSets} sets × {ex.targetReps} reps @ RPE {ex.targetRpe}
-                  </span>
-                </div>
+                <FastForward className="w-4 h-4" />
+                Skip Rest & Start Next Workout
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Controls bar: Swap order & Finish workout */}
+              <div className="mt-2.5 flex items-center justify-between gap-2 font-mono">
+                {todaysWorkout.nextSession ? (
+                  <button
+                    type="button"
+                    onClick={handleSwapOrder}
+                    className="text-[10px] text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 px-2 py-1 rounded-lg flex items-center gap-1.5 transition"
+                    title={`Swap order with: ${todaysWorkout.nextSession.sessionName}`}
+                  >
+                    <ArrowLeftRight className="w-3 h-3 text-indigo-400" />
+                    <span>Swap with Next: {todaysWorkout.nextSession.sessionName.slice(0, 12)}...</span>
+                  </button>
+                ) : <div />}
+
                 <button
                   type="button"
-                  onClick={() => handleStartNextSet(ex)}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1 transition active:scale-95"
+                  onClick={handleCompleteSession}
+                  className="text-[10px] bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm transition"
                 >
-                  <Play className="w-3 h-3 fill-current" />
-                  Load
+                  <CheckCircle2 className="w-3 h-3" />
+                  Finish Workout
                 </button>
               </div>
-            ))}
-          </div>
+
+              {/* Exercises List */}
+              <div className="mt-3 space-y-2">
+                {todaysWorkout.exercises.map((ex, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs font-mono"
+                  >
+                    <div>
+                      <span className="font-bold text-zinc-200 capitalize block">
+                        {ex.exerciseName.replace(/_/g, " ")}
+                      </span>
+                      <span className="text-zinc-400 text-[11px]">
+                        Target: <strong className="text-white">{ex.targetLoad}{ex.loadUnit}</strong> • {ex.targetSets} sets × {ex.targetReps} reps @ RPE {ex.targetRpe}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleStartNextSet(ex)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                    >
+                      <Play className="w-3 h-3 fill-current" />
+                      Load
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </section>
+      )}
+
+      {/* AUTOREGULATION PROGRESSION COMPLETION MODAL */}
+      {completionResult && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-mono">
+          <div className="w-full max-w-sm bg-zinc-900 border border-emerald-500/60 rounded-2xl p-5 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold">
+                <Trophy className="w-5 h-5" />
+                <span className="text-sm uppercase tracking-wider">Workout Completed</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompletionResult(null)}
+                className="p-1 text-zinc-500 hover:text-zinc-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-300">{completionResult.message}</p>
+
+            {completionResult.adjustments.length > 0 ? (
+              <div className="space-y-2 pt-1">
+                <span className="text-[10px] text-zinc-500 uppercase block font-bold">
+                  Progressive Overload Applied:
+                </span>
+                {completionResult.adjustments.map((adj, i) => (
+                  <div
+                    key={i}
+                    className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs flex items-center justify-between"
+                  >
+                    <div>
+                      <span className="font-bold text-zinc-200 capitalize block">
+                        {adj.exerciseName.replace(/_/g, " ")}
+                      </span>
+                      <span className="text-[11px] text-zinc-400">
+                        Avg RPE: {adj.avgRpe} • {adj.reason}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-xs font-black ${
+                        adj.loadDelta > 0 ? "text-emerald-400" : "text-amber-400"
+                      }`}
+                    >
+                      {adj.loadDelta > 0 ? `+${adj.loadDelta}` : adj.loadDelta}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-400">
+                All prescribed targets consolidated. Ready for the next block.
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setCompletionResult(null)}
+              className="w-full py-2.5 rounded-xl bg-emerald-500 text-zinc-950 font-black text-xs uppercase tracking-wider transition"
+            >
+              Continue to Next Session
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ACTIVE MOVEMENT CARD */}
@@ -318,133 +515,95 @@ export function ShorthandLogger() {
       </section>
 
       {/* QUICK-ACTION INCREMENT BUTTONS */}
-      <div className="mt-4 grid grid-cols-4 gap-2">
+      <div className="mt-3 grid grid-cols-4 gap-2">
         <button
           type="button"
           onClick={() => adjustLoad(-5)}
-          className="py-3 rounded-xl bg-zinc-900 border border-zinc-800 active:bg-zinc-800 text-zinc-300 font-mono font-bold flex items-center justify-center gap-1 active:scale-95 transition"
+          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
         >
-          <Minus className="w-3.5 h-3.5" /> 5
+          <Minus className="w-3.5 h-3.5 text-zinc-500" />5
         </button>
         <button
           type="button"
           onClick={() => adjustLoad(-2.5)}
-          className="py-3 rounded-xl bg-zinc-900 border border-zinc-800 active:bg-zinc-800 text-zinc-300 font-mono font-bold flex items-center justify-center gap-1 active:scale-95 transition"
+          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
         >
-          <Minus className="w-3.5 h-3.5" /> 2.5
+          <Minus className="w-3.5 h-3.5 text-zinc-500" />2.5
         </button>
         <button
           type="button"
-          onClick={() => adjustLoad(2.5)}
-          className="py-3 rounded-xl bg-zinc-900 border border-zinc-800 active:bg-zinc-800 text-emerald-400 font-mono font-bold flex items-center justify-center gap-1 active:scale-95 transition"
+          onClick={() => adjustLoad(+2.5)}
+          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
         >
-          <Plus className="w-3.5 h-3.5" /> 2.5
+          <Plus className="w-3.5 h-3.5 text-emerald-500" />2.5
         </button>
         <button
           type="button"
-          onClick={() => adjustLoad(5)}
-          className="py-3 rounded-xl bg-zinc-900 border border-zinc-800 active:bg-zinc-800 text-emerald-400 font-mono font-bold flex items-center justify-center gap-1 active:scale-95 transition"
+          onClick={() => adjustLoad(+5)}
+          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
         >
-          <Plus className="w-3.5 h-3.5" /> 5
+          <Plus className="w-3.5 h-3.5 text-emerald-500" />5
         </button>
       </div>
 
-      {/* LARGE SHORTHAND INPUT FIELD */}
-      <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-2">
-        <label className="text-xs font-mono text-zinc-400 flex items-center justify-between">
-          <span>SHORTHAND TELEMETRY LOG</span>
-          <span className="text-[10px] text-zinc-500">e.g. sq 140 5,5,5 @ 8.5</span>
-        </label>
+      {/* SHORTHAND INPUT FORM */}
+      <form onSubmit={handleSubmit} className="mt-4">
+        <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
+          <label htmlFor="shorthand-input" className="uppercase tracking-wider">
+            Shorthand Telemetry Log
+          </label>
+          <span className="text-zinc-500 text-[11px]">e.g. sq 140 5,5,5 @ 8.5</span>
+        </div>
         <div className="relative">
           <input
+            id="shorthand-input"
             ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="bench 100kg 3x5 rpe8"
+            className="w-full pl-4 pr-24 py-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 focus:border-emerald-500 focus:outline-none text-white font-mono text-base placeholder:text-zinc-600 shadow-inner"
             autoFocus
-            disabled={isPending}
-            className="w-full text-lg font-mono font-bold bg-zinc-900 border-2 border-zinc-700 focus:border-emerald-500 rounded-2xl px-4 py-4 text-white placeholder-zinc-600 outline-none transition shadow-inner"
           />
           <button
             type="submit"
-            disabled={isPending || !input.trim()}
-            className="absolute right-2 top-2 bottom-2 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 disabled:opacity-30 disabled:pointer-events-none text-zinc-950 font-black text-sm tracking-wide uppercase transition flex items-center gap-1.5 shadow-lg"
+            disabled={!input.trim() || isPending}
+            className="absolute right-2 top-2 bottom-2 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-mono font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5 shadow-md"
           >
-            <Zap className="w-4 h-4 fill-current" />
+            <Zap className="w-3.5 h-3.5 fill-current" />
             Log
           </button>
         </div>
       </form>
 
-      {/* SUB-30-WORD ACTIVE COACHING DIRECTIVE CARD */}
+      {/* EXECUTION COACH DIRECTIVE CARD */}
       {activeDirective && (
-        <section
-          className={`mt-4 p-4 rounded-2xl border transition-all shadow-lg ${
-            activeDirective.urgency === "CRITICAL"
-              ? "bg-red-950/80 border-red-500 text-red-100"
-              : activeDirective.urgency === "ADAPT"
-              ? "bg-amber-950/70 border-amber-500 text-amber-100"
-              : "bg-zinc-900/95 border-emerald-500/70 text-zinc-100"
-          }`}
-        >
-          <div className="flex items-center justify-between pb-2 border-b border-zinc-800/50">
-            <div className="flex items-center gap-2">
-              <Radio
-                className={`w-4 h-4 animate-pulse ${
-                  activeDirective.urgency === "CRITICAL"
-                    ? "text-red-400"
-                    : activeDirective.urgency === "ADAPT"
-                    ? "text-amber-400"
-                    : "text-emerald-400"
-                }`}
-              />
-              <span className="text-[11px] font-mono font-black uppercase tracking-wider">
-                Execution Directive • {activeDirective.urgency}
-              </span>
+        <section className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-indigo-950/60 to-zinc-900 border border-indigo-500/40 shadow-xl">
+          <div className="flex items-center justify-between pb-2 border-b border-indigo-900/60 font-mono text-xs">
+            <div className="flex items-center gap-1.5 text-indigo-400">
+              <Radio className="w-4 h-4 animate-pulse" />
+              <span className="font-bold uppercase tracking-wider">Coach Execution Cue</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-400">
-                {activeDirective.word_count} words
-              </span>
-              <button
-                type="button"
-                onClick={() => speakDirective(activeDirective)}
-                title="Speak directive"
-                className="p-1 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300"
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-          <p className="mt-2 text-sm font-mono font-bold leading-relaxed">
-            {activeDirective.directive_text}
-          </p>
-        </section>
-      )}
-
-      {/* FEEDBACK STATUS MESSAGE */}
-      {lastResponse && (
-        <div
-          className={`mt-3 p-3 rounded-xl text-xs font-mono flex items-center gap-2 border ${
-            lastResponse.success
-              ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
-              : "bg-red-950/60 border-red-800 text-red-300"
-          }`}
-        >
-          {lastResponse.success ? (
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-          ) : (
-            <AlertOctagon className="w-4 h-4 shrink-0 text-red-400" />
-          )}
-          <span>{lastResponse.message}</span>
-          {lastResponse.oneRepMax && (
-            <span className="ml-auto font-bold text-zinc-200">
-              e1RM: {lastResponse.oneRepMax}
-              {preferredUnit}
+            <span className="text-[11px] text-zinc-400">
+              {activeDirective.word_count} words • {activeDirective.urgency}
             </span>
-          )}
-        </div>
+          </div>
+
+          <div className="mt-2.5 text-sm font-medium text-zinc-100 leading-snug">
+            &ldquo;{activeDirective.directive_text}&rdquo;
+          </div>
+
+          <div className="mt-3 flex items-center justify-between pt-2 border-t border-indigo-900/40">
+            <span className="text-[11px] text-indigo-300 font-mono">
+              Category: {activeDirective.cue_category}
+            </span>
+
+            <AudioCuePlayer
+              directive={activeDirective}
+              isEnabled={isAudioEnabled}
+            />
+          </div>
+        </section>
       )}
 
       {/* HUMAN OVERRIDE TOGGLE */}
@@ -519,7 +678,7 @@ export function ShorthandLogger() {
         <button
           type="button"
           onClick={handleEmergencyHardStop}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-red-600 to-red-700 active:from-red-700 active:to-red-800 text-white font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl shadow-red-950/50 active:scale-[0.98] transition border border-red-500/30"
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-red-600 to-red-700 active:from-red-700 active:to-red-800 text-white font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl shadow-red-950/50 active:scale-[0.98] transition border border-red-500/30 cursor-pointer"
         >
           <ShieldAlert className="w-5 h-5" />
           REPORT PAIN / EMERGENCY HARD STOP

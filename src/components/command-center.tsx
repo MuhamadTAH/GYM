@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Sparkles,
   CheckCircle2,
+  User,
 } from "lucide-react";
 import {
   getNutritionOverviewAction,
@@ -19,6 +20,7 @@ import {
 } from "@/app/actions";
 import type { MacroBreakdown, NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
+import { ProfileModal } from "./profile-modal";
 
 export function CommandCenter() {
   const [goal, setGoal] = useState<NutritionGoal>("maintain");
@@ -26,6 +28,7 @@ export function CommandCenter() {
   const [userName, setUserName] = useState("Athlete");
   const [weightKg, setWeightKg] = useState(80);
   const [preferredUnit, setPreferredUnit] = useState<"kg" | "lb">("kg");
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   // Mesocycle Form State
   const [mesoGoal, setMesoGoal] = useState<PlannerGoal>("hypertrophy");
@@ -36,8 +39,7 @@ export function CommandCenter() {
 
   const [isPending, startTransition] = useTransition();
 
-  // Load nutrition data on mount and on goal switch
-  useEffect(() => {
+  const refreshNutrition = () => {
     getNutritionOverviewAction(goal).then((res) => {
       if (res.success && res.nutrition) {
         setNutrition(res.nutrition);
@@ -46,6 +48,11 @@ export function CommandCenter() {
         setPreferredUnit(res.preferredUnit);
       }
     });
+  };
+
+  // Load nutrition data on mount and on goal switch
+  useEffect(() => {
+    refreshNutrition();
   }, [goal]);
 
   // Generate new mesocycle handler
@@ -71,6 +78,13 @@ export function CommandCenter() {
 
   return (
     <div className="w-full max-w-md mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-4 pb-20 select-none">
+      {/* Profile & 1RMs Modal */}
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        onSaved={refreshNutrition}
+      />
+
       {/* Header */}
       <header className="flex items-center justify-between pb-3 border-b border-zinc-800">
         <div className="flex items-center gap-2">
@@ -79,9 +93,14 @@ export function CommandCenter() {
             Command Center • Metabolic & Block Engine
           </span>
         </div>
-        <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-          {userName}
-        </span>
+        <button
+          type="button"
+          onClick={() => setIsProfileOpen(true)}
+          className="text-xs font-mono px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer"
+        >
+          <User className="w-3.5 h-3.5 text-emerald-400" />
+          <span>{userName}</span>
+        </button>
       </header>
 
       {/* METABOLIC & MACRO PANEL */}
