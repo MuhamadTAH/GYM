@@ -1,92 +1,136 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "@/mcp/server";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-interface SessionEntry {
-  server: Server;
-  transport: WebStandardStreamableHTTPServerTransport;
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Accept, mcp-session-id, Last-Event-ID, authorization, mcp-protocol-version",
+  "Access-Control-Expose-Headers": "mcp-session-id",
+};
+
+interface McpSession {
+  sessionId: string;
+  transport: Transport;
+  sseWriter: WritableStreamDefaultWriter<Uint8Array> | null;
+  encoder: TextEncoder;
   lastActive: number;
+  pendingResolvers: Map<string | number, (res: JSONRPCMessage) => void>;
+  cleanup: () => void;
 }
 
-// In-memory session store for remote MCP clients (Gemini, Claude, LibreChat, etc.)
-const sessions = new Map<string, SessionEntry>();
+const sessions = new Map<string, McpSession>();
 
-// Evict sessions older than 30 minutes
-function pruneOldSessions() {
+// Cleanup inactive sessions (> 30 mins)
+function pruneSessions() {
   const now = Date.now();
-  const maxAge = 30 * 60 * 1000;
-  for (const [id, entry] of sessions.entries()) {
-    if (now - entry.lastActive > maxAge) {
+  for (const [id, s] of sessions.entries()) {
+    if (now - s.lastActive > 30 * 60 * 1000) {
+      s.cleanup();
       sessions.delete(id);
     }
   }
 }
 
-async function getOrCreateSession(request: Request): Promise<SessionEntry> {
-  pruneOldSessions();
+async function createSession(sessionId: string): Promise<McpSession> {
+  pruneSessions();
 
-  const requestedSessionId = request.headers.get("mcp-session-id");
-  if (requestedSessionId && sessions.has(requestedSessionId)) {
-    const entry = sessions.get(requestedSessionId)!;
-    entry.lastActive = Date.now();
-    return entry;
-  }
+  const encoder = new TextEncoder();
+  const pendingResolvers = new Map<string | number, (res: JSONRPCMessage) => void>();
 
-  const newSessionId = crypto.randomUUID();
-  const server = createMcpServer();
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => newSessionId,
-    onsessionclosed: (sid) => {
-      sessions.delete(sid);
-    },
-  });
+  let onMessageCallback: ((msg: JSONRPCMessage) => void) | null = null;
+  let onCloseCallback: (() => void) | null = null;
 
-  await server.connect(transport);
-
-  const entry: SessionEntry = {
-    server,
-    transport,
+  const session: McpSession = {
+    sessionId,
+    transport: null as any,
+    sseWriter: null,
+    encoder,
     lastActive: Date.now(),
+    pendingResolvers,
+    cleanup: () => {},
   };
 
-  sessions.set(newSessionId, entry);
-  return entry;
-}
+  const transport: Transport = {
+    start: async () => {},
+    close: async () => {
+      if (onCloseCallback) onCloseCallback();
+    },
+    send: async (msg: JSONRPCMessage) => {
+      // 1. If SSE client is connected, broadcast message event
+      if (session.sseWriter) {
+        try {
+          const sseFormatted = `event: message\ndata: ${JSON.stringify(msg)}\n\n`;
+          session.sseWriter.write(encoder.encode(sseFormatted)).catch(() => {
+            session.sseWriter = null;
+          });
+        } catch (err) {
+          console.error("[MCP:SSE] Error writing to stream:", err);
+        }
+      }
 
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  headers.set(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Accept, mcp-session-id, Last-Event-ID, authorization"
-  );
-  headers.set("Access-Control-Expose-Headers", "mcp-session-id");
+      // 2. Resolve pending POST promise if client is awaiting response
+      const id = (msg as { id?: string | number }).id;
+      if (id !== undefined && pendingResolvers.has(id)) {
+        const resolve = pendingResolvers.get(id)!;
+        pendingResolvers.delete(id);
+        resolve(msg);
+      }
+    },
+    set onmessage(fn: (msg: JSONRPCMessage) => void) {
+      onMessageCallback = fn;
+    },
+    get onmessage() {
+      return onMessageCallback ?? undefined;
+    },
+    set onclose(fn: () => void) {
+      onCloseCallback = fn;
+    },
+    get onclose() {
+      return onCloseCallback ?? undefined;
+    },
+  };
 
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-  });
+  session.transport = transport;
+
+  session.cleanup = () => {
+    if (session.sseWriter) {
+      try {
+        session.sseWriter.close();
+      } catch {}
+      session.sseWriter = null;
+    }
+    sessions.delete(sessionId);
+  };
+
+  const server = createMcpServer();
+  await server.connect(transport);
+
+  sessions.set(sessionId, session);
+  return session;
 }
 
 export async function OPTIONS() {
-  return withCors(new Response(null, { status: 204 }));
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
 }
 
 export async function GET(request: Request) {
   const accept = request.headers.get("accept") || "";
 
-  // If opened directly in browser or health checked, return JSON info
+  // If opened in browser without text/event-stream, return server health check
   if (!accept.includes("text/event-stream")) {
-    return withCors(
-      Response.json({
+    return Response.json(
+      {
         name: "gym-engine",
         status: "online",
-        transport: "StreamableHTTP / SSE",
+        transport: "SSE / StreamableHTTP",
         endpoint: "/api/mcp",
         protocolVersion: "2024-11-05",
         description: "Gym Autoregulated S&C Coach Model Context Protocol (MCP) Server",
@@ -108,29 +152,146 @@ export async function GET(request: Request) {
             "reply_to_chat_message",
           ],
         },
-      })
+      },
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
     );
   }
 
-  // Handle SSE stream initialization
-  const session = await getOrCreateSession(request);
-  const response = await session.transport.handleRequest(request);
-  return withCors(response);
+  // Handle SSE Connection Handshake
+  const url = new URL(request.url);
+  const sessionId = url.searchParams.get("sessionId") || crypto.randomUUID();
+
+  // Create or reuse session
+  let session = sessions.get(sessionId);
+  if (!session) {
+    session = await createSession(sessionId);
+  }
+
+  const stream = new TransformStream();
+  const forwardWriter = stream.writable.getWriter();
+  const encoder = new TextEncoder();
+  session.sseWriter = forwardWriter;
+
+  // Initial endpoint event
+  const handshake = `event: endpoint\ndata: /api/mcp?sessionId=${sessionId}\n\n`;
+  await forwardWriter.write(encoder.encode(handshake));
+
+  const pingTimer = setInterval(() => {
+    forwardWriter.write(encoder.encode(": keepalive\n\n")).catch(() => {
+      clearInterval(pingTimer);
+      if (session?.sseWriter === forwardWriter) {
+        session.sseWriter = null;
+      }
+    });
+  }, 15000);
+
+  return new Response(stream.readable, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "mcp-session-id": sessionId,
+      ...corsHeaders,
+    },
+  });
 }
 
 export async function POST(request: Request) {
-  const session = await getOrCreateSession(request);
-  const response = await session.transport.handleRequest(request);
-  return withCors(response);
+  const url = new URL(request.url);
+  const sessionId =
+    request.headers.get("mcp-session-id") ||
+    url.searchParams.get("sessionId") ||
+    "default-session";
+
+  let session = sessions.get(sessionId);
+  if (!session) {
+    session = await createSession(sessionId);
+  }
+
+  session.lastActive = Date.now();
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (err) {
+    return Response.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
+  const messages: JSONRPCMessage[] = Array.isArray(body) ? body : [body];
+
+  // If client wants direct JSON response (StreamableHTTP):
+  const requestId = messages[0]?.id;
+
+  if (requestId !== undefined && session.transport.onmessage) {
+    const responsePromise = new Promise<JSONRPCMessage>((resolve) => {
+      session!.pendingResolvers.set(requestId, resolve);
+      // Timeout fallback if tool takes longer than 10 seconds
+      setTimeout(() => {
+        if (session!.pendingResolvers.has(requestId)) {
+          session!.pendingResolvers.delete(requestId);
+          resolve({
+            jsonrpc: "2.0",
+            id: requestId,
+            error: { code: -32000, message: "Request timed out" },
+          } as any);
+        }
+      }, 10000);
+    });
+
+    for (const msg of messages) {
+      session.transport.onmessage(msg);
+    }
+
+    const result = await responsePromise;
+    return Response.json(result, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "mcp-session-id": sessionId,
+        ...corsHeaders,
+      },
+    });
+  }
+
+  // Otherwise handle message and return 202 Accepted
+  if (session.transport.onmessage) {
+    for (const msg of messages) {
+      session.transport.onmessage(msg);
+    }
+  }
+
+  return new Response(null, {
+    status: 202,
+    headers: {
+      "mcp-session-id": sessionId,
+      ...corsHeaders,
+    },
+  });
 }
 
 export async function DELETE(request: Request) {
-  const sessionId = request.headers.get("mcp-session-id");
+  const url = new URL(request.url);
+  const sessionId =
+    request.headers.get("mcp-session-id") || url.searchParams.get("sessionId");
+
   if (sessionId && sessions.has(sessionId)) {
     const session = sessions.get(sessionId)!;
-    const response = await session.transport.handleRequest(request);
-    sessions.delete(sessionId);
-    return withCors(response);
+    session.cleanup();
   }
-  return withCors(new Response(null, { status: 204 }));
+
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
 }
