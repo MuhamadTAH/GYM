@@ -96,7 +96,31 @@ export function generateCoachResponse(
     };
   }
 
-  // 3. INTENT: Swap Workout Session
+  // 3. INTENT: Shorthand Set Logging (e.g., 'bench 100kg 3x5 rpe8', 'dl 150 3x6')
+  const strippedForLog = cleanMsg.replace(/^log\s+|^record\s+|^set\s+/i, "").trim();
+  const parsed = parseGymShorthand(strippedForLog, context.profile.preferredUnit);
+
+  if (parsed.success) {
+    const p = parsed;
+    const repsSummary = p.reps_per_set.length > 1 ? `${p.total_sets}x${p.reps_per_set.join(",")}` : `${p.reps_per_set[0] || 5}`;
+    const coachDirective = `${p.exercise_name.replace(/_/g, " ")}: ${p.load_value}${p.load_unit} x ${repsSummary} @ RPE ${p.rpe || 8}. Drive floor away; maintain bar path. Rest 3m.`;
+
+    return {
+      replyText: `Logged set: ${p.exercise_name.replace(/_/g, " ").toUpperCase()} — ${p.load_value}${p.load_unit} x ${repsSummary} (RPE ${p.rpe ?? "unspecified"}). ${coachDirective}`,
+      actionReceipt: {
+        type: "SET_LOGGED",
+        summary: `${p.exercise_name.replace(/_/g, " ")}: ${p.load_value}${p.load_unit} x ${repsSummary}`,
+        badgeColor: "emerald",
+        data: p,
+      },
+      suggestedAction: {
+        type: "log_set",
+        payload: { rawInput: strippedForLog },
+      },
+    };
+  }
+
+  // 4. INTENT: Swap Workout Session
   if (lower.includes("swap") || lower.includes("switch session")) {
     const w = context.activeWorkout;
     if (!w.nextSession) {
@@ -120,7 +144,47 @@ export function generateCoachResponse(
     };
   }
 
-  // 3. INTENT: Workout Status & Prescribed Movements
+  // 4. INTENT: Specific Exercise Guidance (Deadlift, Squat, Bench, Row, Pullup)
+  if (lower.includes("deadlift") || lower.includes("dl")) {
+    const w = context.activeWorkout;
+    const dlEx = w.exercises.find((e) => e.exerciseName.includes("deadlift"));
+    const targetInfo = dlEx
+      ? `${dlEx.targetSets} working sets of ${dlEx.targetReps} reps at ${dlEx.targetLoad}${dlEx.loadUnit} @ RPE ${dlEx.targetRpe}`
+      : "3 sets of 6 reps at 150kg @ RPE 7.5";
+
+    return {
+      replyText: `Deadlift Strategy for today (${w.sessionName}):\n\n• Prescribed Target: ${targetInfo}.\n• Setup Cues: Stand hip-width, wedge your hips into position, pull the slack out of the barbell until it clicks against the plates, lock your lats tight ('squeeze oranges in your armpits'), and drive the floor away through mid-foot.\n• Autoregulation: If warmup at 130kg feels heavy (RPE > 8), we can downregulate today's top sets to 142.5kg. How is your lower back feeling?`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: `Deadlift: ${targetInfo}`,
+        badgeColor: "emerald",
+      },
+    };
+  }
+
+  if (lower.includes("squat") || lower.includes("back squat")) {
+    return {
+      replyText: `Squat Technique & Prescriptions:\n\n• Baseline 1RM: ${context.profile.baselineLifts.squat_1rm}${context.profile.preferredUnit}.\n• Execution Cues: Create 360° intra-abdominal pressure into your belt. Break hips and knees simultaneously. Maintain three-point foot contact (big toe, pinky toe, heel) and accelerate aggressively out of the hole.`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: `Squat Baselines & Cues`,
+        badgeColor: "emerald",
+      },
+    };
+  }
+
+  if (lower.includes("bench") || lower.includes("press")) {
+    return {
+      replyText: `Bench Press Strategy:\n\n• Baseline 1RM: ${context.profile.baselineLifts.bench_press_1rm}${context.profile.preferredUnit}.\n• Setup Cues: Retract and depress scapulae onto the bench, plant feet firmly for leg drive, control the eccentric to the lower sternum, and drive back up toward your eyes.`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: `Bench Press Form Cues`,
+        badgeColor: "emerald",
+      },
+    };
+  }
+
+  // 5. INTENT: Workout Status & Prescribed Movements
   if (
     lower.includes("workout") ||
     lower.includes("today") ||
@@ -230,31 +294,48 @@ export function generateCoachResponse(
   }
 
 
-  // 6. INTENT: Shorthand Set Logging
-  const strippedForLog = cleanMsg.replace(/^log\s+|^record\s+|^set\s+/i, "").trim();
-  const parsed = parseGymShorthand(strippedForLog, context.profile.preferredUnit);
-
-  if (parsed.success) {
-    const p = parsed;
-    const repsSummary = p.reps_per_set.length > 1 ? `${p.total_sets}x${p.reps_per_set.join(",")}` : `${p.reps_per_set[0] || 5}`;
-    const coachDirective = `${p.exercise_name.replace(/_/g, " ")}: ${p.load_value}${p.load_unit} x ${repsSummary} @ RPE ${p.rpe || 8}. Drive floor away; maintain bar path. Rest 3m.`;
-
+  // 7. INTENT: Fatigue, Soreness & Autoregulation
+  if (
+    lower.includes("tired") ||
+    lower.includes("fatigue") ||
+    lower.includes("exhausted") ||
+    lower.includes("sore") ||
+    lower.includes("weak") ||
+    lower.includes("heavy") ||
+    lower.includes("bad sleep") ||
+    lower.includes("low energy")
+  ) {
     return {
-      replyText: `Logged set: ${p.exercise_name.replace(/_/g, " ").toUpperCase()} — ${p.load_value}${p.load_unit} x ${repsSummary} (RPE ${p.rpe ?? "unspecified"}). ${coachDirective}`,
+      replyText: `Got it. Autoregulation in action:\n\n• When systemic fatigue or sleep debt is high, don't grind through failure. Reduce today's working loads by 7.5% - 10% (e.g. drop Deadlifts from 150kg to ~137.5kg) or shave off the final set.\n• Focus strictly on movement crispness and bar speed at RPE 6-7.\n• Would you like me to adjust today's load modifier to 0.90 (10% deload)?`,
       actionReceipt: {
-        type: "SET_LOGGED",
-        summary: `${p.exercise_name.replace(/_/g, " ")}: ${p.load_value}${p.load_unit} x ${repsSummary}`,
-        badgeColor: "emerald",
-        data: p,
-      },
-      suggestedAction: {
-        type: "log_set",
-        payload: { rawInput: strippedForLog },
+        type: "COACH_ADVICE",
+        summary: `Autoregulation: Fatigue Adjustment`,
+        badgeColor: "amber",
       },
     };
   }
 
-  // 7. DEFAULT: Contextual Strength & Conditioning Guidance
+  // 8. INTENT: Mesocycle, Progression & Block Periodization
+  if (
+    lower.includes("progression") ||
+    lower.includes("mesocycle") ||
+    lower.includes("block") ||
+    lower.includes("periodization") ||
+    lower.includes("overload") ||
+    lower.includes("plan")
+  ) {
+    const w = context.activeWorkout;
+    return {
+      replyText: `4-Week Mesocycle Blueprint:\n\n• Week 1 (Current): Accumulation & Calibration — Establishing baseline volume at moderate RPE (7.0 - 8.0).\n• Week 2: Intensification — +2.5% to 5% load increase or +1 rep per set.\n• Week 3: Peak Volume/Intensity — Target PR sets @ RPE 8.5 - 9.0.\n• Week 4: Deload & Supercompensation — 50% volume reduction to dissipate accumulated neural fatigue before the next block.`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: `Week 1 Accumulation Phase`,
+        badgeColor: "indigo",
+      },
+    };
+  }
+
+  // 10. DEFAULT: Contextual Strength & Conditioning Guidance
   const w = context.activeWorkout;
   const currentExercises = w.exercises.map((e) => `${e.exerciseName.replace(/_/g, " ")} (${e.targetLoad}${e.loadUnit})`).join(", ");
 
