@@ -96,6 +96,51 @@ export function generateCoachResponse(
     };
   }
 
+  // 3. INTENT: Coach Identity & System Capabilities ("who are you", "what do you do", "help")
+  if (
+    lower.includes("who are you") ||
+    lower.includes("who r u") ||
+    lower.includes("what are you") ||
+    lower.includes("what can you do") ||
+    lower.includes("introduce yourself") ||
+    lower.includes("who is this") ||
+    lower.includes("what is your name") ||
+    lower.includes("what do you do") ||
+    lower === "help" ||
+    lower === "about"
+  ) {
+    const p = context.profile;
+    const b = p.baselineLifts;
+    const u = p.preferredUnit;
+
+    return {
+      replyText: `I am your AI Strength & Conditioning Coach, connected directly to your gym engine via MCP.\n\nHere is how I manage your training:\n• Autoregulated Programming: I prescribe your exact loads and volume based on your baseline 1RMs (Squat ${b.squat_1rm}${u}, Bench ${b.bench_press_1rm}${u}, Deadlift ${b.deadlift_1rm}${u}).\n• Real-Time S&C Intelligence: I answer questions about exercise technique, form cues, fatigue adjustments, and block periodization.\n• Layer 0 Safety: If you report acute joint or back pain, I immediately activate a hard-stop to protect you from injury.\n• Live Actions: You can log working sets using shorthand (e.g., 'dl 150 3x6 rpe7.5'), swap sessions if equipment is busy, or calculate nutrition targets.\n\nRight now, I have your active block loaded: ${context.activeWorkout.sessionName}. What do you need assistance with today, ${p.name}?`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: "AI Coach Identity & Capabilities",
+        badgeColor: "emerald",
+      },
+    };
+  }
+
+  // 4. INTENT: How Are You / Coach Status Check
+  if (
+    lower.includes("how are you") ||
+    lower.includes("how r u") ||
+    lower.includes("how are you doing") ||
+    lower.includes("how's it going") ||
+    lower.includes("hows it going")
+  ) {
+    return {
+      replyText: `I'm fully calibrated and ready to coach, ${context.profile.name}! Telemetry is streaming, safety monitors are active, and today's ${context.activeWorkout.sessionName} is primed. How is your energy and recovery today?`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: "Coach Ready",
+        badgeColor: "emerald",
+      },
+    };
+  }
+
   // 3. INTENT: Shorthand Set Logging (e.g., 'bench 100kg 3x5 rpe8', 'dl 150 3x6')
   const strippedForLog = cleanMsg.replace(/^log\s+|^record\s+|^set\s+/i, "").trim();
   const parsed = parseGymShorthand(strippedForLog, context.profile.preferredUnit);
