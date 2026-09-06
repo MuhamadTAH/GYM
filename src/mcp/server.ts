@@ -32,24 +32,12 @@ import type { PlannerGoal, SplitType } from "@/lib/planner";
  * All diagnostics, status, and error logs MUST route to console.error.
  */
 
-export const server = new Server(
-  {
-    name: "gym-engine",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      resources: {},
-      tools: {},
-    },
-  }
-);
+export function registerHandlers(server: Server) {
+  // ============================================================================
+  // MCP RESOURCES: Read-Only State Inspection
+  // ============================================================================
 
-// ============================================================================
-// MCP RESOURCES: Read-Only State Inspection
-// ============================================================================
-
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
     resources: [
       {
@@ -611,7 +599,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ],
     };
   }
-});
+  });
+}
+
+export function createMcpServer(): Server {
+  const s = new Server(
+    {
+      name: "gym-engine",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        resources: {},
+        tools: {},
+      },
+    }
+  );
+  registerHandlers(s);
+  return s;
+}
+
+export const server = createMcpServer();
 
 // ============================================================================
 // SERVER INITIALIZATION & TRANSPORT
