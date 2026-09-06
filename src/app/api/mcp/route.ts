@@ -42,9 +42,6 @@ async function createSession(sessionId: string): Promise<McpSession> {
   const encoder = new TextEncoder();
   const pendingResolvers = new Map<string | number, (res: JSONRPCMessage) => void>();
 
-  let onMessageCallback: ((msg: JSONRPCMessage) => void) | null = null;
-  let onCloseCallback: (() => void) | null = null;
-
   const session: McpSession = {
     sessionId,
     transport: null as any,
@@ -58,7 +55,7 @@ async function createSession(sessionId: string): Promise<McpSession> {
   const transport: Transport = {
     start: async () => {},
     close: async () => {
-      if (onCloseCallback) onCloseCallback();
+      if (transport.onclose) transport.onclose();
     },
     send: async (msg: JSONRPCMessage) => {
       // 1. If SSE client is connected, broadcast message event
@@ -81,18 +78,8 @@ async function createSession(sessionId: string): Promise<McpSession> {
         resolve(msg);
       }
     },
-    set onmessage(fn: (msg: JSONRPCMessage) => void) {
-      onMessageCallback = fn;
-    },
-    get onmessage() {
-      return onMessageCallback ?? undefined;
-    },
-    set onclose(fn: () => void) {
-      onCloseCallback = fn;
-    },
-    get onclose() {
-      return onCloseCallback ?? undefined;
-    },
+    onmessage: undefined,
+    onclose: undefined,
   };
 
   session.transport = transport;
@@ -231,7 +218,7 @@ export async function POST(request: Request) {
   const messages: JSONRPCMessage[] = Array.isArray(body) ? body : [body];
 
   // If client wants direct JSON response (StreamableHTTP):
-  const requestId = messages[0]?.id;
+  const requestId = (messages[0] as { id?: string | number })?.id;
 
   if (requestId !== undefined && session.transport.onmessage) {
     const responsePromise = new Promise<JSONRPCMessage>((resolve) => {
