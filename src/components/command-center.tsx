@@ -277,28 +277,37 @@ export function CommandCenter() {
             </div>
 
             <div className="space-y-2 font-mono text-xs">
-              {[
-                { group: "Chest / Push", planned: 12, completed: 5, color: "bg-emerald-400" },
-                { group: "Back / Pull", planned: 14, completed: 8, color: "bg-blue-400" },
-                { group: "Quads / Legs", planned: 12, completed: 6, color: "bg-purple-400" },
-                { group: "Hamstrings / Hinge", planned: 8, completed: 4, color: "bg-amber-400" },
-                { group: "Shoulders (OHP)", planned: 8, completed: 3, color: "bg-teal-400" },
-              ].map((item) => (
-                <div key={item.group} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-850">
-                  <div className="flex justify-between text-zinc-300 mb-1.5">
-                    <span className="font-bold">{item.group}</span>
-                    <span className="text-zinc-400 text-[11px]">
-                      {item.completed} / {item.planned} sets
-                    </span>
+              {(() => {
+                const hasActivePlan = Boolean(
+                  activeWorkout &&
+                  activeWorkout.sessionId &&
+                  activeWorkout.sessionName !== "No Active Plan"
+                );
+                return [
+                  { group: "Chest / Push", planned: hasActivePlan ? 12 : 0, completed: 0, color: "bg-emerald-400" },
+                  { group: "Back / Pull", planned: hasActivePlan ? 14 : 0, completed: 0, color: "bg-blue-400" },
+                  { group: "Quads / Legs", planned: hasActivePlan ? 12 : 0, completed: 0, color: "bg-purple-400" },
+                  { group: "Hamstrings / Hinge", planned: hasActivePlan ? 8 : 0, completed: 0, color: "bg-amber-400" },
+                  { group: "Shoulders (OHP)", planned: hasActivePlan ? 8 : 0, completed: 0, color: "bg-teal-400" },
+                ].map((item) => (
+                  <div key={item.group} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-850">
+                    <div className="flex justify-between text-zinc-300 mb-1.5">
+                      <span className="font-bold">{item.group}</span>
+                      <span className="text-zinc-400 text-[11px]">
+                        {item.completed} / {item.planned} sets
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${item.color} rounded-full`}
+                        style={{
+                          width: `${item.planned > 0 ? Math.min(100, (item.completed / item.planned) * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${item.color} rounded-full`}
-                      style={{ width: `${Math.min(100, (item.completed / item.planned) * 100)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
           </section>
         </div>
