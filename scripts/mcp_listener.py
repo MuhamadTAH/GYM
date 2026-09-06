@@ -1,13 +1,18 @@
 import sqlite3
 import time
-import json
 import os
 import sys
+
+# Ensure UTF-8 output on Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "gym.db")
 
 def wait_for_athlete_message():
-    print(f"=== MCP PYTHON LISTENER ACTIVE ===", flush=True)
+    print("=== MCP PYTHON LISTENER ACTIVE ===", flush=True)
     print(f"Listening on {DB_PATH} for athlete messages...", flush=True)
     
     while True:
@@ -40,13 +45,13 @@ def wait_for_athlete_message():
                 
                 # Fetch active workout session
                 cursor.execute(
-                    "SELECT session_name, week_number, day_index, status FROM workout_sessions WHERE is_completed = 0 AND status != 'aborted' ORDER BY scheduled_date ASC LIMIT 1"
+                    "SELECT session_name, status FROM workout_sessions WHERE status != 'aborted' ORDER BY started_at DESC LIMIT 1"
                 )
                 session = cursor.fetchone()
-                session_name = session["session_name"] if session else "General Training"
+                session_name = session["session_name"] if session else "Active Gym Floor Workout"
                 
                 print("\n" + "=" * 64, flush=True)
-                print(f"🔔 NEW ATHLETE MESSAGE RECEIVED FROM DASHBOARD OVER MCP", flush=True)
+                print("[MCP INCOMING] NEW ATHLETE MESSAGE FROM DASHBOARD", flush=True)
                 print("=" * 64, flush=True)
                 print(f"MESSAGE ID : {msg_id}", flush=True)
                 print(f"ATHLETE    : {athlete_name}", flush=True)
@@ -56,10 +61,10 @@ def wait_for_athlete_message():
                 print(f"Workout    : {session_name}", flush=True)
                 print(f"1RM Baselines: {baselines} ({unit})", flush=True)
                 print("=" * 64, flush=True)
-                print(f"INSTRUCTION FOR ANTIGRAVITY AI:", flush=True)
-                print(f"1. Formulate a genuine, intelligent, personal AI Coach response to this athlete message.", flush=True)
+                print("INSTRUCTION FOR ANTIGRAVITY AI:", flush=True)
+                print("1. Formulate a genuine, intelligent, personal AI Coach response to this athlete message.", flush=True)
                 print(f"2. Execute: pnpm exec tsx scripts/reply-athlete.ts \"{msg_id}\" \"<YOUR_FRESH_AI_RESPONSE>\"", flush=True)
-                print(f"3. Immediately relaunch python scripts/mcp_listener.py as a background task.", flush=True)
+                print("3. Immediately relaunch python scripts/mcp_listener.py as a background task.", flush=True)
                 print("=" * 64 + "\n", flush=True)
                 
                 conn.close()
@@ -67,7 +72,7 @@ def wait_for_athlete_message():
                 
             conn.close()
         except Exception as e:
-            print(f"[Listener Warning]: {e}", flush=True)
+            print(f"[Listener Error]: {e}", flush=True)
             
         time.sleep(0.5)
 
