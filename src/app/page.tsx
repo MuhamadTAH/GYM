@@ -1,14 +1,15 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Dumbbell, BarChart3, User } from "lucide-react";
+import { Dumbbell, BarChart3, User, Bot } from "lucide-react";
 import { ShorthandLogger } from "@/components/shorthand-logger";
 import { CommandCenter } from "@/components/command-center";
+import { CoachDashboard } from "@/components/coach-dashboard";
 import { ProfileModal } from "@/components/profile-modal";
 import { getUserProfileAction } from "@/app/actions";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"hud" | "command_center">("hud");
+  const [activeTab, setActiveTab] = useState<"hud" | "command_center" | "coach">("hud");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [userName, setUserName] = useState("Athlete");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -58,37 +59,51 @@ export default function Home() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-2 bg-zinc-900 p-1 rounded-xl border border-zinc-800 font-mono text-xs">
+        <div className="grid grid-cols-3 bg-zinc-900 p-1 rounded-xl border border-zinc-800 font-mono text-[11px]">
           <button
             type="button"
             onClick={() => setActiveTab("hud")}
-            className={`py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2 px-1.5 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
               activeTab === "hud"
                 ? "bg-emerald-500 text-zinc-950 shadow-md"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            <Dumbbell className="w-4 h-4" />
-            Gym HUD
+            <Dumbbell className="w-3.5 h-3.5" />
+            <span>HUD</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("command_center")}
-            className={`py-2 px-3 rounded-lg font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2 px-1.5 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
               activeTab === "command_center"
                 ? "bg-indigo-600 text-white shadow-md"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
-            <BarChart3 className="w-4 h-4" />
-            Command Center
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Plan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("coach")}
+            className={`py-2 px-1.5 rounded-lg font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              activeTab === "coach"
+                ? "bg-purple-600 text-white shadow-md"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>AI Coach</span>
           </button>
         </div>
       </div>
 
       {/* Tab Content View */}
-      <div key={refreshKey} className="w-full max-w-md flex-1">
-        {activeTab === "hud" ? <ShorthandLogger /> : <CommandCenter />}
+      <div key={refreshKey} className="w-full max-w-md flex-1 px-2">
+        {activeTab === "hud" && <ShorthandLogger />}
+        {activeTab === "command_center" && <CommandCenter />}
+        {activeTab === "coach" && <CoachDashboard />}
       </div>
     </main>
   );

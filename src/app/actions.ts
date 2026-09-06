@@ -917,3 +917,68 @@ export async function getNutritionOverviewAction(goal: NutritionGoal = "maintain
     preferredUnit: user.preferredUnit,
   };
 }
+
+import { generateCoachResponse, type CoachChatResponse, type CoachActionReceipt } from "@/lib/coach-chat";
+
+export interface CoachActionResult {
+  replyText: string;
+  actionReceipt?: CoachActionReceipt;
+  executedAction?: {
+    type: string;
+    success: boolean;
+    result?: any;
+  };
+  currentWorkout: TodaysWorkoutView;
+}
+
+/**
+ * Handles conversational queries and executes database mutations from chat
+ */
+export async function sendCoachMessageAction(
+  userMessage: string,
+  autoExecute: boolean = true
+): Promise<CoachActionResult> {
+  const profile = await getUserProfileAction();
+  const activeWorkout = await getTodaysWorkoutAction();
+  const recentSets = await fetchRecentSetsAction();
+
+  const coachResponse = generateCoachResponse(userMessage, {
+    profile,
+    activeWorkout,
+    recentSets: recentSets.map((s) => ({
+      exerciseName: s.exerciseName,
+      loadValue: s.loadValue,
+      loadUnit: s.loadUnit,
+      reps: s.reps,
+      loggedRpe: s.loggedRpe,
+    })),
+  });
+
+  let executedAction: { type: string; success: boolean; result?: any } | undefined;
+
+  if (autoExecute && coachResponse.suggestedAction) {
+    const { type, payload } = coachResponse.suggestedAction;
+
+    if (type === "log_set" && payload?.rawInput) {
+      const logRes = await submitShorthandSetAction(payload.rawInput);
+      executedAction = { type: "log_set", success: logRes.success, result: logRes };
+    } else if (type === "safety_abort") {
+      const abortRes = await triggerManualHardStopAction(payload?.reason || "Chat safety trigger");
+      executedAction = { type: "safety_abort", success: true, result: abortRes };
+    } else if (type === "swap_session" && payload?.currentId && payload?.nextId) {
+      const swapRes = await swapSessionOrderAction(payload.currentId, payload.nextId);
+      executedAction = { type: "swap_session", success: swapRes.success, result: swapRes };
+    }
+  }
+
+  // Get refreshed state after potential mutations
+  const updatedWorkout = await getTodaysWorkoutAction();
+
+  return {
+    replyText: coachResponse.replyText,
+    actionReceipt: coachResponse.actionReceipt,
+    executedAction,
+    currentWorkout: updatedWorkout,
+  };
+}
+
