@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "gym-engine": {
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "npx",
+        "tsx",
+        "d:\\GYM\\src\\mcp\\server.ts"
+      ],
+      "env": {
+        "DATABASE_URL": "file:d:\\GYM\\gym.db"
+      }
+    }
+  }
+}

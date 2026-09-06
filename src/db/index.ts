@@ -18,6 +18,11 @@ const client =
     url: process.env.DATABASE_URL || "file:gym.db",
   });
 
+// Ensure SQLite runs in WAL mode to prevent lock contention between concurrent processes
+void client.execute("PRAGMA journal_mode = WAL;").catch((err) => {
+  console.error("Failed to set SQLite WAL mode:", err);
+});
+
 if (process.env.NODE_ENV !== "production") {
   globalThis.client = client;
 }
