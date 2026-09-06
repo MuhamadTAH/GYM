@@ -165,8 +165,16 @@ export async function GET(request: Request) {
   const encoder = new TextEncoder();
   session.sseWriter = forwardWriter;
 
-  // Initial endpoint event with absolute URL
-  const endpointUrl = `${url.origin}/api/mcp?sessionId=${sessionId}`;
+  // Initial endpoint event with public absolute URL
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const publicDomain =
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+    (forwardedHost && !forwardedHost.includes("0.0.0.0") ? forwardedHost : null) ||
+    url.host;
+  const proto =
+    request.headers.get("x-forwarded-proto") ||
+    (publicDomain.includes("localhost") ? "http" : "https");
+  const endpointUrl = `${proto}://${publicDomain}/api/mcp?sessionId=${sessionId}`;
   const handshake = `event: endpoint\ndata: ${endpointUrl}\n\n`;
   forwardWriter.write(encoder.encode(handshake)).catch(() => {});
 

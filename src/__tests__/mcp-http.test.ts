@@ -64,6 +64,28 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
     expect(data.capabilities.tools).toHaveLength(7);
   });
 
+  it("handles SSE GET request and emits endpoint handshake event", async () => {
+    const req = new Request("http://localhost:3000/api/mcp", {
+      method: "GET",
+      headers: {
+        accept: "text/event-stream",
+      },
+    });
+
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(res.headers.get("mcp-session-id")).toBeTruthy();
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeTruthy();
+    const chunk = await reader?.read();
+    const text = new TextDecoder().decode(chunk?.value);
+    expect(text).toContain("event: endpoint");
+    expect(text).toContain("/api/mcp?sessionId=");
+    reader?.cancel();
+  });
+
   it("initializes an MCP session via POST and returns mcp-session-id", async () => {
     const req = new Request("http://localhost:3000/api/mcp", {
       method: "POST",
