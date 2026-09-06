@@ -15,6 +15,7 @@ import {
 import {
   getUserProfileAction,
   saveUserProfileAction,
+  quickStartWorkoutAction,
   type UserProfileView,
 } from "@/app/actions";
 import { calculateBrzycki1RM } from "@/lib/math";
@@ -185,6 +186,20 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
     });
   };
 
+  const handleQuickStart = () => {
+    startTransition(async () => {
+      const res = await quickStartWorkoutAction();
+      if (res.success) {
+        setMessage("⚡ Initialized default athlete & started Day 1 workout! No setup needed.");
+        setTimeout(() => {
+          setMessage("");
+          if (onSaved) onSaved();
+          onClose();
+        }, 1200);
+      }
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -214,6 +229,31 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
 
         {/* Scrollable Content */}
         <div className="overflow-y-auto space-y-4 py-4 pr-1 flex-1 text-xs">
+          {/* ZERO FRICTION QUICK START BANNER */}
+          <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/70 via-zinc-900/90 to-emerald-950/70 border border-emerald-500/40 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Zero-Box Instant Training
+              </span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                1-CLICK SKIP
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-300 leading-tight">
+              Don&apos;t want to fill in boxes? Skip setup immediately. The engine seeds standard baselines, activates your 4-week block, and starts your Day 1 workout right now.
+            </p>
+            <button
+              type="button"
+              onClick={handleQuickStart}
+              disabled={isPending}
+              className="w-full py-2 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer shadow-md disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              {isPending ? "Starting Day 1..." : "⚡ Skip Setup & Start Training Now"}
+            </button>
+          </div>
+
           {/* SECTION 1: BIOMETRICS */}
           <div className="p-3.5 rounded-xl bg-zinc-900/70 border border-zinc-800/80 space-y-3">
             <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
@@ -557,11 +597,19 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
         )}
 
         {/* Footer Actions */}
-        <div className="pt-3 mt-2 border-t border-zinc-850 flex gap-2 shrink-0">
+        <div className="pt-3 mt-2 border-t border-zinc-850 flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleQuickStart}
+            disabled={isPending}
+            className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-850 text-emerald-400 font-black text-xs uppercase tracking-wider transition border border-emerald-500/30 whitespace-nowrap"
+          >
+            ⚡ Skip & Train
+          </button>
           <button
             type="button"
             onClick={onClose}
-            className="w-1/3 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 font-bold text-xs uppercase transition"
+            className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 font-bold text-xs uppercase transition text-center"
           >
             Cancel
           </button>
@@ -569,10 +617,10 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
             type="button"
             onClick={handleSave}
             disabled={isPending}
-            className="w-2/3 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 transition"
+            className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/50 transition"
           >
             <Check className="w-4 h-4" />
-            {isPending ? "Saving..." : "Save Profile & 1RMs"}
+            {isPending ? "Saving..." : "Save"}
           </button>
         </div>
       </div>

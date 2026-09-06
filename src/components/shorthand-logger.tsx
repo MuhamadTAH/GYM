@@ -31,6 +31,7 @@ import {
   completeWorkoutSessionAction,
   swapSessionOrderAction,
   skipRestDayAction,
+  quickStartWorkoutAction,
   type LoggedSetResponse,
   type TodaysWorkoutView,
   type AutoregulationAdjustment,
@@ -90,6 +91,24 @@ export function ShorthandLogger() {
           setCurrentLoad(firstEx.targetLoad);
           setPreferredUnit(firstEx.loadUnit);
         }
+      }
+    });
+  };
+
+  // Quick Start Training immediately (Skip Setup)
+  const handleQuickStart = () => {
+    startTransition(async () => {
+      const res = await quickStartWorkoutAction();
+      if (res.success && res.todaysWorkout) {
+        setTodaysWorkout(res.todaysWorkout);
+        if (res.todaysWorkout.exercises.length > 0) {
+          const firstEx = res.todaysWorkout.exercises[0];
+          setActiveExercise(firstEx.exerciseName);
+          setCurrentLoad(firstEx.targetLoad);
+          setPreferredUnit(firstEx.loadUnit);
+        }
+        setStatusMessage("Workout loaded! You are actively in training.");
+        setTimeout(() => setStatusMessage(""), 3500);
       }
     });
   };
@@ -225,7 +244,7 @@ export function ShorthandLogger() {
   };
 
   return (
-    <div className="w-full max-w-md mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-4 pb-20 select-none">
+    <div className="w-full max-w-6xl mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-2 sm:p-4 pb-20 select-none">
       {/* Profile & 1RMs Modal */}
       <ProfileModal
         isOpen={isProfileOpen}
@@ -290,154 +309,404 @@ export function ShorthandLogger() {
         </div>
       )}
 
-      {/* LAYER 0 ARBITRATION ALERT BANNER */}
-      {arbitrationState && arbitrationState.hard_stop_active && (
-        <div className="mt-4 p-4 rounded-xl bg-red-950/90 border-2 border-red-600 text-red-100 animate-bounce">
-          <div className="flex items-center gap-3">
-            <AlertOctagon className="w-8 h-8 text-red-400 shrink-0" />
-            <div>
-              <div className="text-sm font-black tracking-wide uppercase text-red-200">
-                Layer 0 Hard Stop Abort
-              </div>
-              <p className="text-xs font-medium text-red-300 mt-1">
-                {arbitrationState.abort_reason || "Acute pain flag forces immediate exercise abort."}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {arbitrationState &&
-        !arbitrationState.hard_stop_active &&
-        arbitrationState.arbitration_decision === "DOWN_REGULATE" && (
-          <div className="mt-4 p-3 rounded-xl bg-amber-950/80 border border-amber-500 text-amber-200">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                  Layer 0 Down-Regulator Active
+      {/* 2-COLUMN RESPONSIVE LAPTOP GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mt-4">
+        {/* LEFT COLUMN: Prescribed Session, Active Movement, Shorthand Form & Sets (7 cols) */}
+        <div className="lg:col-span-7 space-y-4">
+          {/* TODAY'S PRESCRIBED SESSION CARD */}
+          {todaysWorkout && (
+            <section className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
+              <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/80">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-emerald-400" />
+                  <h2 className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
+                    Today&apos;s Prescribed Session
+                  </h2>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 font-bold uppercase">
+                  {todaysWorkout.sessionName}
                 </span>
-                <p className="text-xs text-amber-200/90 mt-0.5">
-                  {arbitrationState.action_summary}
-                </p>
               </div>
-            </div>
-          </div>
-        )}
 
-      {/* TODAY'S PRESCRIBED SESSION CARD */}
-      {todaysWorkout && (
-        <section className="mt-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
-          <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800/80">
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
-                Today&apos;s Prescribed Session
-              </h2>
-            </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 font-bold uppercase">
-              {todaysWorkout.sessionName}
-            </span>
-          </div>
-
-          {/* REST DAY CARD */}
-          {todaysWorkout.isRestDay ? (
-            <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
-              <div className="flex items-center justify-center gap-2 text-indigo-400 font-bold text-sm">
-                <Sparkles className="w-4 h-4" />
-                <span>Scheduled Rest & Recovery Day</span>
-              </div>
-              <p className="text-xs text-zinc-400">
-                Muscular recovery and glycogen resynthesis are active.
-                {todaysWorkout.nextSession && (
-                  <span className="block mt-1 text-zinc-300">
-                    Next up: <strong>{todaysWorkout.nextSession.sessionName}</strong> ({todaysWorkout.nextSession.exerciseCount} exercises)
-                  </span>
-                )}
-              </p>
-              <button
-                type="button"
-                onClick={handleSkipRest}
-                className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 transition"
-              >
-                <FastForward className="w-4 h-4" />
-                Skip Rest & Start Next Workout
-              </button>
-            </div>
-          ) : todaysWorkout.exercises.length === 0 ? (
-            <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
-              <div className="flex items-center justify-center gap-2 text-zinc-400 font-bold text-xs">
-                <Dumbbell className="w-4 h-4 text-indigo-400" />
-                <span>No Active Workout Plan</span>
-              </div>
-              <p className="text-[11px] text-zinc-500">
-                You have no active mesocycle scheduled. Configure your athlete profile baseline 1RMs to generate your personalized 4-week training block.
-              </p>
-              <button
-                type="button"
-                onClick={() => setIsProfileOpen(true)}
-                className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 transition cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                Configure Profile & Generate Plan
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Controls bar: Swap order & Finish workout */}
-              <div className="mt-2.5 flex items-center justify-between gap-2 font-mono">
-                {todaysWorkout.nextSession ? (
+              {/* REST DAY CARD */}
+              {todaysWorkout.isRestDay ? (
+                <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
+                  <div className="flex items-center justify-center gap-2 text-indigo-400 font-bold text-sm">
+                    <Sparkles className="w-4 h-4" />
+                    <span>Scheduled Rest & Recovery Day</span>
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    Muscular recovery and glycogen resynthesis are active.
+                    {todaysWorkout.nextSession && (
+                      <span className="block mt-1 text-zinc-300">
+                        Next up: <strong>{todaysWorkout.nextSession.sessionName}</strong> ({todaysWorkout.nextSession.exerciseCount} exercises)
+                      </span>
+                    )}
+                  </p>
                   <button
                     type="button"
-                    onClick={handleSwapOrder}
-                    className="text-[10px] text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 px-2 py-1 rounded-lg flex items-center gap-1.5 transition"
-                    title={`Swap order with: ${todaysWorkout.nextSession.sessionName}`}
+                    onClick={handleSkipRest}
+                    className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 transition"
                   >
-                    <ArrowLeftRight className="w-3 h-3 text-indigo-400" />
-                    <span>Swap with Next: {todaysWorkout.nextSession.sessionName.slice(0, 12)}...</span>
+                    <FastForward className="w-4 h-4" />
+                    Skip Rest & Start Next Workout
                   </button>
-                ) : <div />}
-
-                <button
-                  type="button"
-                  onClick={handleCompleteSession}
-                  className="text-[10px] bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm transition"
-                >
-                  <CheckCircle2 className="w-3 h-3" />
-                  Finish Workout
-                </button>
-              </div>
-
-              {/* Exercises List */}
-              <div className="mt-3 space-y-2">
-                {todaysWorkout.exercises.map((ex, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs font-mono"
-                  >
-                    <div>
-                      <span className="font-bold text-zinc-200 capitalize block">
-                        {ex.exerciseName.replace(/_/g, " ")}
-                      </span>
-                      <span className="text-zinc-400 text-[11px]">
-                        Target: <strong className="text-white">{ex.targetLoad}{ex.loadUnit}</strong> • {ex.targetSets} sets × {ex.targetReps} reps @ RPE {ex.targetRpe}
-                      </span>
-                    </div>
+                </div>
+              ) : todaysWorkout.exercises.length === 0 ? (
+                <div className="mt-3 p-5 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
+                  <div className="flex items-center justify-center gap-2 text-emerald-400 font-bold text-sm">
+                    <Zap className="w-4 h-4" />
+                    <span>Ready to Start Training?</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                    No forms or boxes to fill out. Jump straight into training with adaptive baseline weights that auto-adjust to your performance.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
                     <button
                       type="button"
-                      onClick={() => handleStartNextSet(ex)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                      onClick={handleQuickStart}
+                      disabled={isPending}
+                      className="py-3 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition cursor-pointer"
                     >
-                      <Play className="w-3 h-3 fill-current" />
-                      Load
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Start Training Now (Skip Setup)</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsProfileOpen(true)}
+                      className="py-2.5 px-3.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 text-xs font-bold transition cursor-pointer"
+                    >
+                      Custom 1RM Setup
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Controls bar: Swap order & Finish workout */}
+                  <div className="mt-2.5 flex items-center justify-between gap-2 font-mono">
+                    {todaysWorkout.nextSession ? (
+                      <button
+                        type="button"
+                        onClick={handleSwapOrder}
+                        className="text-[10px] text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 px-2 py-1 rounded-lg flex items-center gap-1.5 transition"
+                        title={`Swap order with: ${todaysWorkout.nextSession.sessionName}`}
+                      >
+                        <ArrowLeftRight className="w-3 h-3 text-indigo-400" />
+                        <span>Swap with Next: {todaysWorkout.nextSession.sessionName.slice(0, 16)}...</span>
+                      </button>
+                    ) : <div />}
+
+                    <button
+                      type="button"
+                      onClick={handleCompleteSession}
+                      className="text-[10px] bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm transition cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      Finish Workout
+                    </button>
+                  </div>
+
+                  {/* Exercises List */}
+                  <div className="mt-3 space-y-2">
+                    {todaysWorkout.exercises.map((ex, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs font-mono"
+                      >
+                        <div>
+                          <span className="font-bold text-zinc-200 capitalize block">
+                            {ex.exerciseName.replace(/_/g, " ")}
+                          </span>
+                          <span className="text-zinc-400 text-[11px]">
+                            Target: <strong className="text-white">{ex.targetLoad}{ex.loadUnit}</strong> • {ex.targetSets} sets × {ex.targetReps} reps @ RPE {ex.targetRpe}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleStartNextSet(ex)}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          Load
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* ACTIVE MOVEMENT CARD */}
+          <section className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
+            <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
+              <span>CURRENT MOVEMENT</span>
+              <span className="text-emerald-400 font-bold uppercase">Ready</span>
+            </div>
+            <div className="mt-1 flex items-baseline justify-between">
+              <h2 className="text-2xl font-black tracking-tight text-white capitalize">
+                {activeExercise.replace(/_/g, " ")}
+              </h2>
+              <div className="text-xl font-mono font-bold text-zinc-200">
+                {currentLoad} <span className="text-sm text-zinc-400">{preferredUnit}</span>
+              </div>
+            </div>
+
+            {/* Previous Set Reference */}
+            {recentSets.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono text-zinc-400">
+                <span>Last Set:</span>
+                <span className="text-zinc-300">
+                  Set #{recentSets[0].setNumber}: {recentSets[0].loadValue}
+                  {recentSets[0].loadUnit} × {recentSets[0].reps} reps
+                  {recentSets[0].loggedRpe ? ` @ RPE ${recentSets[0].loggedRpe}` : ""}
+                </span>
+              </div>
+            )}
+          </section>
+
+          {/* QUICK-ACTION INCREMENT BUTTONS */}
+          <div className="grid grid-cols-4 gap-2">
+            <button
+              type="button"
+              onClick={() => adjustLoad(-5)}
+              className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition cursor-pointer"
+            >
+              <Minus className="w-3.5 h-3.5 text-zinc-500" />5
+            </button>
+            <button
+              type="button"
+              onClick={() => adjustLoad(-2.5)}
+              className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition cursor-pointer"
+            >
+              <Minus className="w-3.5 h-3.5 text-zinc-500" />2.5
+            </button>
+            <button
+              type="button"
+              onClick={() => adjustLoad(+2.5)}
+              className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-500" />2.5
+            </button>
+            <button
+              type="button"
+              onClick={() => adjustLoad(+5)}
+              className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-500" />5
+            </button>
+          </div>
+
+          {/* SHORTHAND INPUT FORM */}
+          <form onSubmit={handleSubmit}>
+            <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
+              <label htmlFor="shorthand-input" className="uppercase tracking-wider font-bold text-zinc-300">
+                Shorthand Telemetry Log
+              </label>
+              <span className="text-zinc-500 text-[11px]">e.g. sq 140 5,5,5 @ 8.5</span>
+            </div>
+            <div className="relative">
+              <input
+                id="shorthand-input"
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="bench 100kg 3x5 rpe8"
+                className="w-full pl-4 pr-24 py-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 focus:border-emerald-500 focus:outline-none text-white font-mono text-base placeholder:text-zinc-600 shadow-inner"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || isPending}
+                className="absolute right-2 top-2 bottom-2 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-mono font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5 shadow-md cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                Log
+              </button>
+            </div>
+          </form>
+
+          {/* RECENT SETS FEED */}
+          <section className="pt-2">
+            <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-2 font-bold">
+              Recent Logged Sets
+            </h3>
+            {recentSets.length === 0 ? (
+              <div className="p-6 rounded-2xl bg-zinc-900/40 border border-dashed border-zinc-800 text-center text-xs text-zinc-500 font-mono">
+                No sets logged yet today. Use the shorthand bar above to log your working weights.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {recentSets.slice(0, 6).map((set) => (
+                  <div
+                    key={set.id}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/70 border border-zinc-800 text-xs font-mono"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-md bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 text-[11px]">
+                        #{set.setNumber}
+                      </span>
+                      <span className="font-bold text-zinc-200 capitalize">
+                        {set.exerciseName.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-emerald-400 font-bold">
+                        {set.loadValue}
+                        {set.loadUnit} × {set.reps}
+                      </span>
+                      {set.loggedRpe && (
+                        <span className="text-zinc-500 text-[11px]">@{set.loggedRpe}</span>
+                      )}
+                      {set.hasAcutePain && (
+                        <span className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 text-[10px] font-bold">
+                          PAIN
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
-            </>
+            )}
+          </section>
+        </div>
+
+        {/* RIGHT COLUMN: AI Coaching Directive, Layer 0 Alerts & Safety (5 cols) */}
+        <div className="lg:col-span-5 space-y-4">
+          {/* LAYER 0 ARBITRATION ALERT BANNER */}
+          {arbitrationState && arbitrationState.hard_stop_active && (
+            <div className="p-4 rounded-xl bg-red-950/90 border-2 border-red-600 text-red-100 animate-bounce">
+              <div className="flex items-center gap-3">
+                <AlertOctagon className="w-8 h-8 text-red-400 shrink-0" />
+                <div>
+                  <div className="text-sm font-black tracking-wide uppercase text-red-200">
+                    Layer 0 Hard Stop Abort
+                  </div>
+                  <p className="text-xs font-medium text-red-300 mt-1">
+                    {arbitrationState.abort_reason || "Acute pain flag forces immediate exercise abort."}
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
-        </section>
-      )}
+
+          {arbitrationState &&
+            !arbitrationState.hard_stop_active &&
+            arbitrationState.arbitration_decision === "DOWN_REGULATE" && (
+              <div className="p-3.5 rounded-xl bg-amber-950/80 border border-amber-500 text-amber-200">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                      Layer 0 Down-Regulator Active
+                    </span>
+                    <p className="text-xs text-amber-200/90 mt-0.5">
+                      {arbitrationState.action_summary}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          {/* EXECUTION COACH DIRECTIVE CARD */}
+          {activeDirective ? (
+            <section className="p-4 rounded-2xl bg-gradient-to-br from-indigo-950/60 to-zinc-900 border border-indigo-500/40 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-indigo-900/60 font-mono text-xs">
+                <div className="flex items-center gap-1.5 text-indigo-400">
+                  <Radio className="w-4 h-4 animate-pulse" />
+                  <span className="font-bold uppercase tracking-wider">Coach Execution Cue</span>
+                </div>
+                <span className="text-[11px] text-zinc-400">
+                  {activeDirective.word_count} words • {activeDirective.urgency}
+                </span>
+              </div>
+
+              <div className="mt-2.5 text-sm font-medium text-zinc-100 leading-snug">
+                &ldquo;{activeDirective.directive_text}&rdquo;
+              </div>
+
+              <div className="mt-3 flex items-center justify-between pt-2 border-t border-indigo-900/40">
+                <span className="text-[11px] text-indigo-300 font-mono">
+                  Category: {activeDirective.cue_category}
+                </span>
+
+                <AudioCuePlayer
+                  directive={activeDirective}
+                  isEnabled={isAudioEnabled}
+                />
+              </div>
+            </section>
+          ) : (
+            <section className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 text-zinc-400 font-mono text-xs space-y-1.5">
+              <div className="flex items-center gap-2 text-zinc-300 font-bold">
+                <Radio className="w-4 h-4 text-emerald-400" />
+                <span>Coach Audio Intercom</span>
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                Live auditory cues and sub-30-word execution directives will stream here as working sets are recorded.
+              </p>
+            </section>
+          )}
+
+          {/* HUMAN OVERRIDE TOGGLE */}
+          <div className="flex items-center justify-between p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-zinc-200 font-mono">Human Override Mandate</span>
+              <span className="text-[11px] text-zinc-500 font-mono">
+                Subjective biofeedback overrides AI load cuts
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUserOverride((prev) => !prev)}
+              className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+                userOverride ? "bg-amber-500" : "bg-zinc-800"
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${
+                  userOverride ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* QUICK TELEMETRY SYNTAX GUIDE */}
+          <section className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800 font-mono text-xs text-zinc-400 space-y-2">
+            <div className="flex items-center gap-1.5 text-zinc-300 font-bold uppercase tracking-wider text-[11px]">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Shorthand Telemetry Syntax</span>
+            </div>
+            <div className="space-y-1 text-[11px] text-zinc-400">
+              <div className="flex justify-between py-1 border-b border-zinc-850">
+                <span className="text-zinc-300 font-bold">bench 100kg 3x5 rpe8</span>
+                <span className="text-zinc-500">Standard sets</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-zinc-850">
+                <span className="text-zinc-300 font-bold">sq 140 5,5,5 @ 8.5</span>
+                <span className="text-zinc-500">Cluster reps</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-zinc-850">
+                <span className="text-zinc-300 font-bold">dl 180 1x5 pain:knee sharp 7</span>
+                <span className="text-zinc-500">Pain telemetry</span>
+              </div>
+            </div>
+          </section>
+
+          {/* BIG RED SAFETY BUTTON */}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={handleEmergencyHardStop}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:from-red-700 active:to-red-800 text-white font-black text-xs sm:text-sm font-mono uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl shadow-red-950/50 active:scale-[0.98] transition border border-red-500/30 cursor-pointer"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              REPORT PAIN / EMERGENCY HARD STOP
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* AUTOREGULATION PROGRESSION COMPLETION MODAL */}
       {completionResult && (
@@ -503,205 +772,6 @@ export function ShorthandLogger() {
           </div>
         </div>
       )}
-
-      {/* ACTIVE MOVEMENT CARD */}
-      <section className="mt-4 p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
-        <div className="flex items-center justify-between text-xs text-zinc-400 font-mono">
-          <span>CURRENT MOVEMENT</span>
-          <span className="text-emerald-400 font-bold uppercase">Ready</span>
-        </div>
-        <div className="mt-1 flex items-baseline justify-between">
-          <h2 className="text-2xl font-black tracking-tight text-white capitalize">
-            {activeExercise.replace(/_/g, " ")}
-          </h2>
-          <div className="text-xl font-mono font-bold text-zinc-200">
-            {currentLoad} <span className="text-sm text-zinc-400">{preferredUnit}</span>
-          </div>
-        </div>
-
-        {/* Previous Set Reference */}
-        {recentSets.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono text-zinc-400">
-            <span>Last Set:</span>
-            <span className="text-zinc-300">
-              Set #{recentSets[0].setNumber}: {recentSets[0].loadValue}
-              {recentSets[0].loadUnit} × {recentSets[0].reps} reps
-              {recentSets[0].loggedRpe ? ` @ RPE ${recentSets[0].loggedRpe}` : ""}
-            </span>
-          </div>
-        )}
-      </section>
-
-      {/* QUICK-ACTION INCREMENT BUTTONS */}
-      <div className="mt-3 grid grid-cols-4 gap-2">
-        <button
-          type="button"
-          onClick={() => adjustLoad(-5)}
-          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
-        >
-          <Minus className="w-3.5 h-3.5 text-zinc-500" />5
-        </button>
-        <button
-          type="button"
-          onClick={() => adjustLoad(-2.5)}
-          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
-        >
-          <Minus className="w-3.5 h-3.5 text-zinc-500" />2.5
-        </button>
-        <button
-          type="button"
-          onClick={() => adjustLoad(+2.5)}
-          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
-        >
-          <Plus className="w-3.5 h-3.5 text-emerald-500" />2.5
-        </button>
-        <button
-          type="button"
-          onClick={() => adjustLoad(+5)}
-          className="py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-emerald-400 font-mono font-bold text-sm border border-zinc-800 flex items-center justify-center gap-0.5 transition"
-        >
-          <Plus className="w-3.5 h-3.5 text-emerald-500" />5
-        </button>
-      </div>
-
-      {/* SHORTHAND INPUT FORM */}
-      <form onSubmit={handleSubmit} className="mt-4">
-        <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
-          <label htmlFor="shorthand-input" className="uppercase tracking-wider">
-            Shorthand Telemetry Log
-          </label>
-          <span className="text-zinc-500 text-[11px]">e.g. sq 140 5,5,5 @ 8.5</span>
-        </div>
-        <div className="relative">
-          <input
-            id="shorthand-input"
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="bench 100kg 3x5 rpe8"
-            className="w-full pl-4 pr-24 py-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 focus:border-emerald-500 focus:outline-none text-white font-mono text-base placeholder:text-zinc-600 shadow-inner"
-            autoFocus
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isPending}
-            className="absolute right-2 top-2 bottom-2 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-zinc-950 font-mono font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5 shadow-md"
-          >
-            <Zap className="w-3.5 h-3.5 fill-current" />
-            Log
-          </button>
-        </div>
-      </form>
-
-      {/* EXECUTION COACH DIRECTIVE CARD */}
-      {activeDirective && (
-        <section className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-indigo-950/60 to-zinc-900 border border-indigo-500/40 shadow-xl">
-          <div className="flex items-center justify-between pb-2 border-b border-indigo-900/60 font-mono text-xs">
-            <div className="flex items-center gap-1.5 text-indigo-400">
-              <Radio className="w-4 h-4 animate-pulse" />
-              <span className="font-bold uppercase tracking-wider">Coach Execution Cue</span>
-            </div>
-            <span className="text-[11px] text-zinc-400">
-              {activeDirective.word_count} words • {activeDirective.urgency}
-            </span>
-          </div>
-
-          <div className="mt-2.5 text-sm font-medium text-zinc-100 leading-snug">
-            &ldquo;{activeDirective.directive_text}&rdquo;
-          </div>
-
-          <div className="mt-3 flex items-center justify-between pt-2 border-t border-indigo-900/40">
-            <span className="text-[11px] text-indigo-300 font-mono">
-              Category: {activeDirective.cue_category}
-            </span>
-
-            <AudioCuePlayer
-              directive={activeDirective}
-              isEnabled={isAudioEnabled}
-            />
-          </div>
-        </section>
-      )}
-
-      {/* HUMAN OVERRIDE TOGGLE */}
-      <div className="mt-4 flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
-        <div className="flex flex-col">
-          <span className="text-xs font-bold text-zinc-200">Human Override Mandate</span>
-          <span className="text-[11px] text-zinc-500">
-            Subjective biofeedback overrides AI load cuts
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => setUserOverride((prev) => !prev)}
-          className={`w-12 h-6 rounded-full transition-colors relative ${
-            userOverride ? "bg-amber-500" : "bg-zinc-800"
-          }`}
-        >
-          <div
-            className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform ${
-              userOverride ? "translate-x-6" : "translate-x-1"
-            }`}
-          />
-        </button>
-      </div>
-
-      {/* RECENT SETS FEED */}
-      <section className="mt-5 flex-1">
-        <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-wider mb-2">
-          Session Set Feed
-        </h3>
-        {recentSets.length === 0 ? (
-          <div className="p-6 rounded-2xl bg-zinc-900/40 border border-dashed border-zinc-800 text-center text-xs text-zinc-500 font-mono">
-            No sets logged in current session. Enter shorthand above.
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {recentSets.slice(0, 5).map((set) => (
-              <div
-                key={set.id}
-                className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-900/70 border border-zinc-800 text-xs font-mono"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-md bg-zinc-800 flex items-center justify-center font-bold text-zinc-400 text-[11px]">
-                    #{set.setNumber}
-                  </span>
-                  <span className="font-bold text-zinc-200 capitalize">
-                    {set.exerciseName.replace(/_/g, " ")}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-emerald-400 font-bold">
-                    {set.loadValue}
-                    {set.loadUnit} × {set.reps}
-                  </span>
-                  {set.loggedRpe && (
-                    <span className="text-zinc-500 text-[11px]">@{set.loggedRpe}</span>
-                  )}
-                  {set.hasAcutePain && (
-                    <span className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 text-[10px] font-bold">
-                      PAIN
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* BIG RED SAFETY BUTTON */}
-      <footer className="mt-6 pt-4 border-t border-zinc-900">
-        <button
-          type="button"
-          onClick={handleEmergencyHardStop}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-red-600 to-red-700 active:from-red-700 active:to-red-800 text-white font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-xl shadow-red-950/50 active:scale-[0.98] transition border border-red-500/30 cursor-pointer"
-        >
-          <ShieldAlert className="w-5 h-5" />
-          REPORT PAIN / EMERGENCY HARD STOP
-        </button>
-      </footer>
     </div>
   );
 }

@@ -14,7 +14,7 @@ export interface CoachChatResponse {
   replyText: string;
   actionReceipt?: CoachActionReceipt;
   suggestedAction?: {
-    type: "log_set" | "safety_abort" | "swap_session" | "recalculate_mesocycle";
+    type: "log_set" | "safety_abort" | "swap_session" | "recalculate_mesocycle" | "quick_start_workout";
     payload?: any;
   };
 }
@@ -137,6 +137,39 @@ export function generateCoachResponse(
         type: "COACH_ADVICE",
         summary: "Coach Ready",
         badgeColor: "emerald",
+      },
+    };
+  }
+
+  // 5. INTENT: Start Training / Quick Start / Skip Setup ("i want to start training", "let's train", "start workout")
+  if (
+    lower.includes("start training") ||
+    lower.includes("start workout") ||
+    lower.includes("start my workout") ||
+    lower.includes("let's train") ||
+    lower.includes("lets train") ||
+    lower.includes("ready to train") ||
+    lower.includes("want to train") ||
+    lower.includes("skip setup") ||
+    lower.includes("skip box") ||
+    lower.includes("begin workout") ||
+    lower.includes("let's workout") ||
+    lower.includes("lets workout")
+  ) {
+    const sessionName =
+      context.activeWorkout.sessionName !== "No Active Plan"
+        ? context.activeWorkout.sessionName
+        : "Push Day (W1D1)";
+
+    return {
+      replyText: `Let's get after it, ${context.profile.name}! You are actively in training. Your workout (${sessionName}) is loaded on the floor. No need to fill out forms or 1RMs—just hit your lifts and log each set as you go (e.g. 'bench 60kg 3x8 rpe7.5'). I'll autoregulate your progression and safety on every set. What exercise are you hitting first?`,
+      actionReceipt: {
+        type: "WORKOUT_INFO",
+        summary: `Active Training • ${sessionName}`,
+        badgeColor: "emerald",
+      },
+      suggestedAction: {
+        type: "quick_start_workout",
       },
     };
   }

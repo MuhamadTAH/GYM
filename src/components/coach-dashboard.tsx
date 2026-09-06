@@ -8,6 +8,12 @@ import {
   CheckCircle2,
   ShieldAlert,
   Clock,
+  Play,
+  Dumbbell,
+  Flame,
+  Activity,
+  Zap,
+  RefreshCw,
 } from "lucide-react";
 import {
   submitUserChatMessageAction,
@@ -217,6 +223,7 @@ export function CoachDashboard() {
   };
 
   const QUICK_PROMPTS = [
+    { label: "⚡ Start Training (Skip Setup)", prompt: "I want to start training right now, skip setup and begin today's workout" },
     { label: "📋 Today's Workout", prompt: "What is my workout today?" },
     { label: "📊 Show 1RMs", prompt: "Show my 1RMs and strength baselines" },
     { label: "🥩 Cutting Macros", prompt: "What are my daily macros for a cut?" },
@@ -240,64 +247,150 @@ export function CoachDashboard() {
   };
 
   return (
-    <div className="w-full flex flex-col h-[calc(100vh-135px)] max-h-[820px] bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl mt-3">
-      {/* 1. Live Telemetry & Status Header */}
-      <div className="bg-zinc-900/90 backdrop-blur-md px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xs font-black font-mono tracking-wider text-zinc-100">
-                AI S&C COACH INTERCOM
-              </h2>
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+    <div className="w-full flex flex-col lg:flex-row h-[calc(100vh-135px)] max-h-[840px] bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl mt-3">
+      {/* LAPTOP SIDEBAR: Telemetry, Quick Shortcuts & MCP Status */}
+      <aside className="hidden lg:flex flex-col w-80 shrink-0 border-r border-zinc-800 bg-zinc-900/50 p-4 justify-between font-mono">
+        <div className="space-y-4">
+          {/* Athlete Intercom Header */}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-zinc-950 border border-zinc-850">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
+              <Bot className="w-5 h-5 text-emerald-400" />
             </div>
-            <p className="text-[11px] font-mono text-zinc-400 truncate max-w-[200px]">
-              {activeSessionName}
-            </p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-black text-white truncate">{athleteName}</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              </div>
+              <span className="text-[10px] text-zinc-400 truncate block">
+                {activeSessionName}
+              </span>
+            </div>
+          </div>
+
+          {/* Layer 0 Safety Card */}
+          <div
+            className={`p-3 rounded-xl border flex items-center justify-between text-xs ${
+              isHardStop
+                ? "bg-red-950/80 text-red-300 border-red-700 animate-pulse"
+                : "bg-zinc-950 text-zinc-300 border-zinc-850"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {isHardStop ? (
+                <ShieldAlert className="w-4 h-4 text-red-400" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              )}
+              <span className="font-bold text-[11px]">
+                {isHardStop ? "HARD-STOP ACTIVE" : "MCP SYSTEM LINK"}
+              </span>
+            </div>
+            <span className="text-[9px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+              READY
+            </span>
+          </div>
+
+          {/* Quick Action Commands */}
+          <div>
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-2">
+              Quick Coach Commands
+            </span>
+            <div className="space-y-1.5">
+              {QUICK_PROMPTS.map((qp, idx) => {
+                const isQuickStart = qp.label.includes("Skip Setup");
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleSendMessage(qp.prompt)}
+                    disabled={loading}
+                    className={`w-full text-left text-xs px-3 py-2.5 rounded-xl transition cursor-pointer flex items-center justify-between border ${
+                      isQuickStart
+                        ? "bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-black shadow-sm"
+                        : "bg-zinc-950/80 hover:bg-zinc-800 text-zinc-300 border-zinc-850"
+                    }`}
+                  >
+                    <span className="truncate">{qp.label}</span>
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-1" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        {/* Layer 0 Safety Indicator */}
-        <div
-          className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border flex items-center gap-1.5 ${
-            isHardStop
-              ? "bg-red-950/80 text-red-400 border-red-700 animate-pulse"
-              : "bg-emerald-950/60 text-emerald-400 border-emerald-800/50"
-          }`}
-        >
-          {isHardStop ? (
-            <>
-              <ShieldAlert className="w-3 h-3" />
-              HARD-STOP ACTIVE
-            </>
-          ) : (
-            <>
-              <CheckCircle2 className="w-3 h-3" />
-              MCP ACTIVE
-            </>
-          )}
+        {/* Live Engine Info */}
+        <div className="pt-3 border-t border-zinc-800/80 text-[10px] text-zinc-500 space-y-1">
+          <div className="flex justify-between">
+            <span>MCP Protocol:</span>
+            <span className="text-zinc-300">SQLite Event Bus</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Auto Overload:</span>
+            <span className="text-emerald-400">Deterministic</span>
+          </div>
         </div>
-      </div>
+      </aside>
 
-      {/* 2. Quick Action Chips */}
-      <div className="px-3 py-2 bg-zinc-900/40 border-b border-zinc-850 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-        {QUICK_PROMPTS.map((qp, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => handleSendMessage(qp.prompt)}
-            disabled={loading}
-            className="text-[11px] font-mono whitespace-nowrap px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-emerald-400 border border-zinc-800 transition cursor-pointer disabled:opacity-50"
+      {/* CHAT INTERCOM PANEL */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-zinc-950">
+        {/* 1. Live Telemetry & Status Header */}
+        <div className="bg-zinc-900/90 backdrop-blur-md px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs font-black font-mono tracking-wider text-zinc-100">
+                  AI S&C COACH INTERCOM
+                </h2>
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <p className="text-[11px] font-mono text-zinc-400 truncate max-w-[200px] sm:max-w-md">
+                {activeSessionName}
+              </p>
+            </div>
+          </div>
+
+          {/* Layer 0 Safety Indicator */}
+          <div
+            className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border flex items-center gap-1.5 ${
+              isHardStop
+                ? "bg-red-950/80 text-red-400 border-red-700 animate-pulse"
+                : "bg-emerald-950/60 text-emerald-400 border-emerald-800/50"
+            }`}
           >
-            {qp.label}
-          </button>
-        ))}
-      </div>
+            {isHardStop ? (
+              <>
+                <ShieldAlert className="w-3 h-3" />
+                HARD-STOP ACTIVE
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-3 h-3" />
+                MCP ACTIVE
+              </>
+            )}
+          </div>
+        </div>
 
-      {/* 3. Interactive Messages Scroll Container */}
+        {/* 2. Quick Action Chips (Mobile / Tablet scrollable) */}
+        <div className="lg:hidden px-3 py-2 bg-zinc-900/40 border-b border-zinc-850 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {QUICK_PROMPTS.map((qp, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => handleSendMessage(qp.prompt)}
+              disabled={loading}
+              className="text-[11px] font-mono whitespace-nowrap px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-emerald-400 border border-zinc-800 transition cursor-pointer disabled:opacity-50"
+            >
+              {qp.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 3. Interactive Messages Scroll Container */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3.5 font-mono text-xs">
         {messages.map((m) => {
           const isUser = m.sender === "user";
@@ -404,5 +497,6 @@ export function CoachDashboard() {
         </p>
       </div>
     </div>
+  </div>
   );
 }

@@ -433,6 +433,52 @@ export async function generateNewMesocycleAction(params?: {
 }
 
 /**
+ * Skip setup and immediately start training with standard adaptive baselines
+ */
+export async function quickStartWorkoutAction(): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const existingUsers = await db.select().from(userProfiles).limit(1);
+  let userId: string;
+  if (existingUsers.length === 0) {
+    const sessionContext = await getOrCreateActiveSession();
+    userId = sessionContext.userId;
+  } else {
+    userId = existingUsers[0].id;
+    if (existingUsers[0].currentWeightValue === 0) {
+      await db
+        .update(userProfiles)
+        .set({
+          currentWeightValue: 75,
+          currentWeightUnit: "kg",
+          heightCm: 175,
+          age: 26,
+          coldStartActive: false,
+          coldStartDaysRemaining: 0,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(userProfiles.id, userId));
+    }
+  }
+
+  await generateNewMesocycleAction({
+    primaryGoal: "hypertrophy",
+    split: "push_pull_legs",
+    daysPerWeek: 4,
+  });
+
+  const todaysWorkout = await getTodaysWorkoutAction();
+
+  return {
+    success: true,
+    message: "Workout loaded! You are actively in training.",
+    todaysWorkout,
+  };
+}
+
+/**
  * Fetches the next uncompleted workout in sequence (ordered by startedAt ASC)
  * Never looks at calendar day; avoids the Missed-Day Glitch.
  */
@@ -986,6 +1032,9 @@ export async function sendCoachMessageAction(
     } else if (type === "swap_session" && payload?.currentId && payload?.nextId) {
       const swapRes = await swapSessionOrderAction(payload.currentId, payload.nextId);
       executedAction = { type: "swap_session", success: swapRes.success, result: swapRes };
+    } else if (type === "quick_start_workout") {
+      const startRes = await quickStartWorkoutAction();
+      executedAction = { type: "quick_start_workout", success: startRes.success, result: startRes };
     }
   }
 
