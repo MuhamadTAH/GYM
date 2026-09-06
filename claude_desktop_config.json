@@ -1,15 +1,19 @@
 {
+  "_comment": "Add this server configuration to your Claude Desktop config file (%APPDATA%\\Claude\\claude_desktop_config.json)",
   "mcpServers": {
     "gym-engine": {
       "command": "cmd.exe",
       "args": [
         "/c",
-        "npx",
-        "tsx",
-        "d:\\GYM\\src\\mcp\\server.ts"
+        "pnpm",
+        "--dir",
+        "d:\\GYM",
+        "run",
+        "mcp"
       ],
       "env": {
-        "DATABASE_URL": "file:d:\\GYM\\gym.db"
+        "DATABASE_URL": "file:gym.db",
+        "NODE_ENV": "production"
       }
     }
   }

@@ -4,6 +4,8 @@ import {
   type ActivityLevel,
 } from "./math";
 
+export type { ActivityLevel };
+
 export type NutritionGoal = "cut" | "bulk" | "maintain";
 
 export interface NutritionCalculatorParams {

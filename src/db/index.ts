@@ -18,10 +18,15 @@ const client =
     url: process.env.DATABASE_URL || "file:gym.db",
   });
 
-// Ensure SQLite runs in WAL mode to prevent lock contention between concurrent processes
-void client.execute("PRAGMA journal_mode = WAL;").catch((err) => {
-  console.error("Failed to set SQLite WAL mode:", err);
-});
+// Run SQLite in WAL mode with a busy timeout to prevent lock contention
+if (!globalThis.client) {
+  client.execute("PRAGMA journal_mode = WAL;").catch((err) => {
+    console.error("[DB] Failed to enable WAL mode:", err);
+  });
+  client.execute("PRAGMA busy_timeout = 5000;").catch((err) => {
+    console.error("[DB] Failed to set busy_timeout:", err);
+  });
+}
 
 if (process.env.NODE_ENV !== "production") {
   globalThis.client = client;

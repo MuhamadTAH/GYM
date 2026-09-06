@@ -1,41 +1,37 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
   ErrorCode,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-
-import { db } from "../db/index";
-import { userProfiles, workoutSessions, exerciseSets } from "../db/schema";
-import { eq, desc, asc, and, ne } from "drizzle-orm";
+import { db } from "@/db";
+import { workoutSessions } from "@/db/schema";
+import { eq, asc } from "drizzle-orm";
 import {
   getOrCreateActiveSession,
+  getUserProfileAction,
+  getTodaysWorkoutAction,
+  fetchRecentSetsAction,
   submitShorthandSetAction,
   triggerManualHardStopAction,
-  getTodaysWorkoutAction,
   generateNewMesocycleAction,
   swapSessionOrderAction,
-} from "../app/actions";
-import { calculateMacroTargets, type NutritionGoal } from "../lib/nutrition";
-import type { ActivityLevel } from "../lib/math";
-import type { PlannerGoal, SplitType } from "../lib/planner";
+} from "@/app/actions";
+import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
+import type { PlannerGoal, SplitType } from "@/lib/planner";
 
 /**
- * MANDATORY MCP STDIO LOGGING RULE:
- * Never use console.log anywhere in the MCP server path.
- * Route all diagnostic logs to console.error to avoid corrupting the stdio JSON-RPC stream.
+ * MANDATORY LOGGING RULE:
+ * Never use console.log in the MCP server path.
+ * Stdio stdout is reserved exclusively for JSON-RPC messages.
+ * All diagnostics, status, and error logs MUST route to console.error.
  */
-function logDiagnostic(message: string, ...args: unknown[]) {
-  console.error(`[gym-engine] ${message}`, ...args);
-}
 
-// 1. Initialize MCP Server instance
-const server = new Server(
+export const server = new Server(
   {
     name: "gym-engine",
     version: "1.0.0",
@@ -48,364 +44,279 @@ const server = new Server(
   }
 );
 
-// 2. Resource Definitions
-const RESOURCES = [
-  {
-    uri: "gym://profile",
-    name: "Active User Profile",
-    mimeType: "application/json",
-    description:
-      "Returns the active user profile, baseline 1RMs, preferred units, and active injuries.",
-  },
-  {
-    uri: "gym://session/active",
-    name: "Active Workout Session",
-    mimeType: "application/json",
-    description:
-      "Returns the current uncompleted workout session with planned exercises, target weights, sets, and reps.",
-  },
-  {
-    uri: "gym://mesocycle/summary",
-    name: "Current Mesocycle Summary",
-    mimeType: "application/json",
-    description:
-      "Returns the current 4-week block details, active week, split type, and completion metrics.",
-  },
-  {
-    uri: "gym://history/recent",
-    name: "Recent Exercise Sets History",
-    mimeType: "application/json",
-    description:
-      "Returns the last 10 logged sets with RPE, load, and pain flags.",
-  },
-];
+// ============================================================================
+// MCP RESOURCES: Read-Only State Inspection
+// ============================================================================
 
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
-    resources: RESOURCES,
+    resources: [
+      {
+        uri: "gym://profile",
+        name: "Athlete Profile & 1RMs",
+        description:
+          "Returns the active user profile, baseline 1RMs, preferred units (kg/lb), and active injury contraindications.",
+        mimeType: "application/json",
+      },
+      {
+        uri: "gym://session/active",
+        name: "Active Prescribed Workout Session",
+        description:
+          "Returns the current uncompleted workout session with planned exercises, target loads, sets, and reps.",
+        mimeType: "application/json",
+      },
+      {
+        uri: "gym://mesocycle/summary",
+        name: "Mesocycle 4-Week Block Summary",
+        description:
+          "Returns current 4-week mesocycle block details, active week, split type, and completion metrics.",
+        mimeType: "application/json",
+      },
+      {
+        uri: "gym://history/recent",
+        name: "Recent Exercise Sets History",
+        description:
+          "Returns the last 10 logged exercise sets with RPE, load, reps, and acute pain telemetry.",
+        mimeType: "application/json",
+      },
+    ],
   };
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const uri = request.params.uri;
-  logDiagnostic(`Reading resource: ${uri}`);
+  const { uri } = request.params;
+  console.error(`[MCP:gym-engine] Reading resource: ${uri}`);
 
-  try {
-    switch (uri) {
-      case "gym://profile": {
-        const { userId } = await getOrCreateActiveSession();
-        const users = await db
-          .select()
-          .from(userProfiles)
-          .where(eq(userProfiles.id, userId))
-          .limit(1);
-
-        if (users.length === 0) {
-          throw new McpError(ErrorCode.InternalError, "User profile not found");
-        }
-
-        const user = users[0];
-        const profileData = {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          age: user.age,
-          sex: user.sex,
-          heightCm: user.heightCm,
-          preferredUnit: user.preferredUnit,
-          currentWeight: {
-            value: user.currentWeightValue,
-            unit: user.currentWeightUnit,
-            sevenDayMedian: user.sevenDayWeightMedian,
+  switch (uri) {
+    case "gym://profile": {
+      const profile = await getUserProfileAction();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(profile, null, 2),
           },
-          baselineLifts: user.baselineLifts,
-          activeInjuries: user.activeInjuries,
-          coldStart: {
-            active: user.coldStartActive,
-            daysRemaining: user.coldStartDaysRemaining,
+        ],
+      };
+    }
+
+    case "gym://session/active": {
+      const todaysWorkout = await getTodaysWorkoutAction();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(todaysWorkout, null, 2),
           },
-          trainingAge: user.trainingAge,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        };
+        ],
+      };
+    }
 
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(profileData, null, 2),
-            },
-          ],
-        };
-      }
+    case "gym://mesocycle/summary": {
+      const sessionContext = await getOrCreateActiveSession();
+      const { userId } = sessionContext;
 
-      case "gym://session/active": {
-        const activeWorkout = await getTodaysWorkoutAction();
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(activeWorkout, null, 2),
-            },
-          ],
-        };
-      }
+      const sessions = await db
+        .select()
+        .from(workoutSessions)
+        .where(eq(workoutSessions.userId, userId))
+        .orderBy(asc(workoutSessions.startedAt));
 
-      case "gym://mesocycle/summary": {
-        const { userId } = await getOrCreateActiveSession();
-        const sessions = await db
-          .select()
-          .from(workoutSessions)
-          .where(eq(workoutSessions.userId, userId))
-          .orderBy(asc(workoutSessions.startedAt));
+      const totalSessions = sessions.length;
+      const completedSessions = sessions.filter((s) => s.status === "completed").length;
+      const plannedSessions = sessions.filter((s) => s.status === "planned").length;
+      const inProgressSessions = sessions.filter((s) => s.status === "in_progress").length;
+      const workoutDays = sessions.filter((s) => s.sessionType !== "rest").length;
+      const completedWorkoutDays = sessions.filter(
+        (s) => s.sessionType !== "rest" && s.status === "completed"
+      ).length;
 
-        const totalSessions = sessions.length;
-        const completedSessions = sessions.filter(
-          (s) => s.status === "completed"
-        ).length;
-        const abortedSessions = sessions.filter(
-          (s) => s.status === "aborted"
-        ).length;
-        const activeSession = sessions.find((s) => s.status === "in_progress");
-        const remainingSessions = sessions.filter(
-          (s) => s.status !== "completed" && s.status !== "aborted"
-        ).length;
+      const activeWeek = Math.min(4, Math.max(1, Math.ceil((completedSessions + 1) / 7)));
+      const activeDay = (completedSessions % 7) + 1;
 
-        const currentSequence = completedSessions + 1;
-        const activeWeek = Math.max(
-          1,
-          Math.min(4, Math.ceil(currentSequence / 7))
-        );
-        const completionRate =
+      const summary = {
+        totalSessions,
+        completedSessions,
+        plannedSessions,
+        inProgressSessions,
+        workoutDays,
+        completedWorkoutDays,
+        activeWeek,
+        activeDay,
+        completionRatePct:
           totalSessions > 0
             ? Math.round((completedSessions / totalSessions) * 100)
-            : 0;
+            : 0,
+      };
 
-        const summary = {
-          totalSessions,
-          completedSessions,
-          abortedSessions,
-          remainingSessions,
-          activeWeek,
-          completionRatePercent: completionRate,
-          activeSession: activeSession
-            ? {
-                id: activeSession.id,
-                name: activeSession.sessionName,
-                type: activeSession.sessionType,
-                startedAt: activeSession.startedAt,
-                arbitrationHardStop: activeSession.arbitrationHardStop,
-                arbitrationDecision: activeSession.arbitrationDecision,
-              }
-            : null,
-        };
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(summary, null, 2),
-            },
-          ],
-        };
-      }
-
-      case "gym://history/recent": {
-        const recentSets = await db
-          .select()
-          .from(exerciseSets)
-          .orderBy(desc(exerciseSets.completedAt))
-          .limit(10);
-
-        const history = recentSets.map((s) => ({
-          id: s.id,
-          sessionId: s.sessionId,
-          exerciseName: s.exerciseName,
-          movementPattern: s.movementPattern,
-          setNumber: s.setNumber,
-          setType: s.setType,
-          loadValue: s.loadValue,
-          loadUnit: s.loadUnit,
-          reps: s.reps,
-          loggedRpe: s.loggedRpe,
-          rir: s.rir,
-          hasAcutePain: s.hasAcutePain,
-          painSite: s.painSite,
-          painSeverity: s.painSeverity,
-          painSensation: s.painSensation,
-          userOverrideActive: s.userOverrideActive,
-          completedAt: s.completedAt,
-        }));
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(history, null, 2),
-            },
-          ],
-        };
-      }
-
-      default:
-        throw new McpError(
-          ErrorCode.InvalidParams,
-          `Unknown resource URI: ${uri}`
-        );
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(summary, null, 2),
+          },
+        ],
+      };
     }
-  } catch (error) {
-    if (error instanceof McpError) throw error;
-    logDiagnostic("Resource error:", error);
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to read resource: ${error instanceof Error ? error.message : String(error)}`
-    );
+
+    case "gym://history/recent": {
+      const sets = await fetchRecentSetsAction();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(sets, null, 2),
+          },
+        ],
+      };
+    }
+
+    default:
+      console.error(`[MCP:gym-engine] Resource not found: ${uri}`);
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown resource URI: ${uri}`);
   }
 });
 
-// 3. Tool Definitions
-const TOOLS = [
-  {
-    name: "log_workout_set",
-    description:
-      "Logs shorthand gym telemetry (e.g. 'bench 100kg 3x5 rpe8'), evaluates Layer 0 arbitration, records the set in SQLite, and returns parsed metrics + arbitration status.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        raw_input: {
-          type: "string",
-          description:
-            "Shorthand workout telemetry string, e.g. 'bench 100kg 3x5 rpe8' or 'squat 140kg 5 reps rpe9 pain:knee:4:sharp'",
-        },
-        user_override: {
-          type: "boolean",
-          description:
-            "Optional human override mandate to bypass arbitration down-regulation",
-        },
-      },
-      required: ["raw_input"],
-    },
-  },
-  {
-    name: "get_active_workout",
-    description:
-      "Fetches the next uncompleted workout session in sequence with planned exercises, target loads, sets, reps, and rest day status.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "trigger_safety_abort",
-    description:
-      "Invokes Layer 0 emergency hard-stop protocol, sets arbitration_hard_stop = true, and cancels remaining load in the active session.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        reason: {
-          type: "string",
-          description:
-            "Reason for emergency abort (e.g. 'Acute sharp shoulder pain during press')",
-        },
-      },
-      required: ["reason"],
-    },
-  },
-  {
-    name: "calculate_nutrition",
-    description:
-      "Calculates deterministic Mifflin-St Jeor BMR, TDEE, calorie target, and macro gram breakdowns (protein, fat, carbs) based on active user profile metrics.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        goal: {
-          type: "string",
-          enum: ["cut", "bulk", "maintain"],
-          description:
-            "Nutrition goal: 'cut' (-500 kcal deficit), 'bulk' (+300 kcal surplus), or 'maintain'",
-        },
-        activity_level: {
-          type: "string",
-          enum: [
-            "sedentary",
-            "lightly_active",
-            "moderately_active",
-            "very_active",
-            "extra_active",
-          ],
-          description:
-            "Activity level multiplier (default: 'moderately_active')",
-        },
-      },
-      required: ["goal"],
-    },
-  },
-  {
-    name: "generate_mesocycle",
-    description:
-      "Generates a deterministic 4-week mesocycle training block and seeds workout sessions into SQLite.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        primary_goal: {
-          type: "string",
-          enum: ["hypertrophy", "strength", "recomposition"],
-          description: "Primary training goal for the 4-week block",
-        },
-        split: {
-          type: "string",
-          enum: ["push_pull_legs", "upper_lower", "full_body"],
-          description: "Workout split structure",
-        },
-        days_per_week: {
-          type: "integer",
-          minimum: 3,
-          maximum: 6,
-          description: "Number of training days per week (3 to 6)",
-        },
-      },
-      required: ["primary_goal", "split", "days_per_week"],
-    },
-  },
-  {
-    name: "swap_workout_order",
-    description:
-      "Swaps today's active workout with the next upcoming session in the queue (Day-Swapping Flexibility).",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
+// ============================================================================
+// MCP TOOLS: Actions & State Mutations
+// ============================================================================
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: TOOLS,
+    tools: [
+      {
+        name: "log_workout_set",
+        description:
+          "Parse gym shorthand telemetry (e.g. 'bench 100kg 3x5 rpe8' or 'sq 140 5,5,5 @ 8.5'), evaluate Layer 0 arbitration safeguards, record sets in SQLite, and return a sub-30-word coaching directive.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            raw_input: {
+              type: "string",
+              description:
+                "Shorthand workout telemetry string (e.g., 'bench 100kg 3x5 rpe8', 'sq 140 5,5,5 @ 8.5', 'dl 225lb 1x5 rir 2', 'squat 100 1x1 pain:knee sharp 8').",
+            },
+            user_override: {
+              type: "boolean",
+              description:
+                "Optional Human Override Mandate flag allowing subjective athlete biofeedback to override AI load reductions.",
+              default: false,
+            },
+          },
+          required: ["raw_input"],
+        },
+      },
+      {
+        name: "get_active_workout",
+        description:
+          "Fetch today's active or next uncompleted workout session in the sequential queue, returning prescribed exercises, target loads, sets, and reps, or rest day status.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "trigger_safety_abort",
+        description:
+          "Invoke the Layer 0 Emergency Hard Stop protocol. Immediately sets hard_stop_active = true, zeroes out load modifiers, and aborts the current movement safely.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            reason: {
+              type: "string",
+              description: "The clinical, pain, or safety reason for the emergency hard stop.",
+            },
+          },
+          required: ["reason"],
+        },
+      },
+      {
+        name: "calculate_nutrition",
+        description:
+          "Calculate deterministic Mifflin-St Jeor BMR, TDEE, target calories, and exact protein/carb/fat gram breakdowns based on user biometrics.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: {
+              type: "string",
+              enum: ["cut", "bulk", "maintain"],
+              description: "Caloric goal: 'cut' (-500 kcal), 'bulk' (+300 kcal), or 'maintain'.",
+            },
+            activity_level: {
+              type: "string",
+              enum: [
+                "sedentary",
+                "lightly_active",
+                "moderately_active",
+                "very_active",
+                "extra_active",
+              ],
+              description: "Physical activity multiplier. Defaults to 'moderately_active'.",
+              default: "moderately_active",
+            },
+          },
+          required: ["goal"],
+        },
+      },
+      {
+        name: "generate_mesocycle",
+        description:
+          "Construct and seed a deterministic 4-week progressive overload mesocycle block into SQLite based on baseline 1RMs and split preferences.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            primary_goal: {
+              type: "string",
+              enum: ["hypertrophy", "strength", "recomposition"],
+              description: "Primary training goal for the 4-week block.",
+            },
+            split: {
+              type: "string",
+              enum: ["push_pull_legs", "upper_lower", "full_body"],
+              description: "Workout split architecture.",
+            },
+            days_per_week: {
+              type: "integer",
+              minimum: 3,
+              maximum: 6,
+              description: "Training frequency in days per week (3 to 6).",
+            },
+          },
+          required: ["primary_goal", "split", "days_per_week"],
+        },
+      },
+      {
+        name: "swap_workout_order",
+        description:
+          "Swap today's active workout with the next upcoming session in the queue (provides day-swapping flexibility when gym equipment is occupied).",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+    ],
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  logDiagnostic(`Calling tool: ${name} with args:`, args);
+  console.error(`[MCP:gym-engine] Calling tool: ${name}`);
 
   try {
     switch (name) {
       case "log_workout_set": {
-        const schema = z.object({
-          raw_input: z.string().min(1, "raw_input cannot be empty"),
-          user_override: z.boolean().optional(),
-        });
-        const parsedArgs = schema.parse(args);
+        const rawInput = String(args?.raw_input || "").trim();
+        const userOverride = Boolean(args?.user_override || false);
 
-        const result = await submitShorthandSetAction(
-          parsedArgs.raw_input,
-          parsedArgs.user_override ?? false
-        );
+        if (!rawInput) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required argument 'raw_input'.");
+        }
 
+        const result = await submitShorthandSetAction(rawInput, userOverride);
         return {
           content: [
             {
@@ -413,38 +324,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(result, null, 2),
             },
           ],
-          isError: !result.success,
         };
       }
 
       case "get_active_workout": {
-        const activeWorkout = await getTodaysWorkoutAction();
+        const result = await getTodaysWorkoutAction();
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(activeWorkout, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
       }
 
       case "trigger_safety_abort": {
-        const schema = z.object({
-          reason: z.string().min(1, "reason cannot be empty"),
-        });
-        const parsedArgs = schema.parse(args);
-
-        const result = await triggerManualHardStopAction(parsedArgs.reason);
+        const reason = String(args?.reason || "Emergency Hard Stop via MCP");
+        const result = await triggerManualHardStopAction(reason);
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify(
                 {
-                  status: "HARD_STOP_TRIGGERED",
-                  reason: parsedArgs.reason,
-                  arbitration: result,
+                  hard_stop_active: result.hard_stop_active,
+                  arbitration_decision: result.arbitration_decision,
+                  abort_reason: result.abort_reason,
+                  action_summary: result.action_summary,
+                  resolved_load_modifier: result.resolved_load_modifier,
                 },
                 null,
                 2
@@ -455,51 +363,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "calculate_nutrition": {
-        const schema = z.object({
-          goal: z.enum(["cut", "bulk", "maintain"]),
-          activity_level: z
-            .enum([
-              "sedentary",
-              "lightly_active",
-              "moderately_active",
-              "very_active",
-              "extra_active",
-            ])
-            .optional(),
-        });
-        const parsedArgs = schema.parse(args);
+        const goal = (args?.goal as NutritionGoal) || "maintain";
+        const activityLevel = (args?.activity_level as ActivityLevel) || "moderately_active";
 
-        const { userId } = await getOrCreateActiveSession();
-        const users = await db
-          .select()
-          .from(userProfiles)
-          .where(eq(userProfiles.id, userId))
-          .limit(1);
+        const profile = await getUserProfileAction();
+        const weightKg =
+          profile.preferredUnit === "lb"
+            ? Math.round(profile.currentWeightValue * 0.453592 * 10) / 10
+            : profile.currentWeightValue;
 
-        if (users.length === 0) {
-          throw new McpError(ErrorCode.InternalError, "User profile not found");
-        }
-
-        const user = users[0];
-        const activityLevel: ActivityLevel =
-          parsedArgs.activity_level ?? "moderately_active";
-        const goal: NutritionGoal = parsedArgs.goal;
-
-        const macros = calculateMacroTargets({
-          weightKg: user.currentWeightValue,
-          heightCm: user.heightCm,
-          ageYears: user.age,
-          sex: user.sex as "male" | "female" | "other",
+        const nutrition = calculateMacroTargets({
+          weightKg,
+          heightCm: profile.heightCm,
+          ageYears: profile.age,
+          sex: profile.sex,
           activityLevel,
           goal,
         });
-
-        if (!macros) {
-          throw new McpError(
-            ErrorCode.InternalError,
-            "Failed to calculate macro targets"
-          );
-        }
 
         return {
           content: [
@@ -507,16 +387,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify(
                 {
-                  athlete: {
-                    name: user.name,
-                    weightKg: user.currentWeightValue,
-                    heightCm: user.heightCm,
-                    age: user.age,
-                    sex: user.sex,
-                    goal,
-                    activityLevel,
+                  athlete: profile.name,
+                  biometrics: {
+                    weightKg,
+                    heightCm: profile.heightCm,
+                    age: profile.age,
+                    sex: profile.sex,
                   },
-                  nutritionPlan: macros,
+                  nutrition,
                 },
                 null,
                 2
@@ -527,17 +405,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "generate_mesocycle": {
-        const schema = z.object({
-          primary_goal: z.enum(["hypertrophy", "strength", "recomposition"]),
-          split: z.enum(["push_pull_legs", "upper_lower", "full_body"]),
-          days_per_week: z.number().int().min(3).max(6),
-        });
-        const parsedArgs = schema.parse(args);
+        const primaryGoal = args?.primary_goal as PlannerGoal;
+        const split = args?.split as SplitType;
+        const daysPerWeek = Number(args?.days_per_week);
+
+        if (!primaryGoal || !split || !daysPerWeek) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "generate_mesocycle requires 'primary_goal', 'split', and 'days_per_week'."
+          );
+        }
 
         const result = await generateNewMesocycleAction({
-          primaryGoal: parsedArgs.primary_goal as PlannerGoal,
-          split: parsedArgs.split as SplitType,
-          daysPerWeek: parsedArgs.days_per_week,
+          primaryGoal,
+          split,
+          daysPerWeek,
         });
 
         return {
@@ -560,11 +442,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 type: "text",
                 text: JSON.stringify({
                   success: false,
-                  message: "No upcoming session available to swap.",
+                  message: "No upcoming workout session available to swap with.",
                 }),
               },
             ],
-            isError: true,
           };
         }
 
@@ -573,68 +454,76 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           activeWorkout.nextSession.sessionId
         );
 
+        const updatedWorkout = await getTodaysWorkoutAction();
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(
+                {
+                  success: result.success,
+                  message: result.message,
+                  nowActiveSession: updatedWorkout.sessionName,
+                  swappedOutSession: activeWorkout.sessionName,
+                },
+                null,
+                2
+              ),
             },
           ],
-          isError: !result.success,
         };
       }
 
       default:
+        console.error(`[MCP:gym-engine] Unknown tool requested: ${name}`);
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
   } catch (error) {
+    console.error(`[MCP:gym-engine] Error executing tool ${name}:`, error);
     if (error instanceof McpError) throw error;
-    if (error instanceof z.ZodError) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                error: "Invalid arguments",
-                details: error.issues,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-        isError: true,
-      };
-    }
-    logDiagnostic("Tool execution error:", error);
     return {
+      isError: true,
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
-            null,
-            2
-          ),
+          text: error instanceof Error ? error.message : "Internal tool execution failure.",
         },
       ],
-      isError: true,
     };
   }
 });
 
-// 4. Start MCP Server over Stdio
-async function main() {
-  logDiagnostic("Starting gym-engine MCP server over Stdio transport...");
+// ============================================================================
+// SERVER INITIALIZATION & TRANSPORT
+// ============================================================================
+
+export async function runServer() {
+  console.error("[MCP:gym-engine] Connecting to stdio transport...");
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logDiagnostic("gym-engine MCP server connected and listening for JSON-RPC messages.");
+  console.error("[MCP:gym-engine] Server successfully running on stdio.");
 }
 
-main().catch((error) => {
-  console.error("[gym-engine] Fatal startup error:", error);
-  process.exit(1);
+process.on("SIGINT", () => {
+  console.error("[MCP:gym-engine] Received SIGINT. Terminating cleanly.");
+  process.exit(0);
 });
+
+process.on("SIGTERM", () => {
+  console.error("[MCP:gym-engine] Received SIGTERM. Terminating cleanly.");
+  process.exit(0);
+});
+
+// Execute when run as CLI
+const isDirectCli =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  (process.argv[1].endsWith("server.ts") || process.argv[1].endsWith("server.js"));
+
+if (isDirectCli) {
+  runServer().catch((err) => {
+    console.error("[MCP:gym-engine] Fatal crash on startup:", err);
+    process.exit(1);
+  });
+}
