@@ -989,21 +989,31 @@ export async function submitUserChatMessageAction(content: string): Promise<{
   id: string;
   success: boolean;
   content: string;
+  status: "pending";
 }> {
   const sessionContext = await getOrCreateActiveSession();
   const { userId } = sessionContext;
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
+  // Enqueue athlete message in SQLite coach_messages with status 'pending' for MCP
   await db.insert(coachMessages).values({
     id,
     userId,
-    content,
+    content: content.trim(),
     status: "pending",
+    replyContent: null,
+    actionReceipt: null,
     createdAt: now,
+    repliedAt: null,
   });
 
-  return { id, success: true, content };
+  return {
+    id,
+    success: true,
+    content: content.trim(),
+    status: "pending",
+  };
 }
 
 /**

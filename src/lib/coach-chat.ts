@@ -74,7 +74,29 @@ export function generateCoachResponse(
     };
   }
 
-  // 2. INTENT: Swap Workout Session
+  // 2. INTENT: Natural Greetings & Casual Conversation
+  if (
+    lower.match(/^(hi|hello|hey|yo|sup|good morning|good evening|howdy|what's up|whats up)\b/) ||
+    lower === "hello" ||
+    lower === "hi" ||
+    lower === "hey"
+  ) {
+    const w = context.activeWorkout;
+    const sessionDetail = w.isRestDay
+      ? "Today is a scheduled Rest & Recovery day"
+      : `Today we have ${w.sessionName}: ${w.exercises.map((e) => `${e.exerciseName.replace(/_/g, " ")} (${e.targetLoad}${e.loadUnit})`).join(", ")}`;
+
+    return {
+      replyText: `Hey ${context.profile.name}! Good to see you. ${sessionDetail}. How are you feeling today, or what would you like to focus on?`,
+      actionReceipt: {
+        type: "COACH_ADVICE",
+        summary: "Coach Active",
+        badgeColor: "emerald",
+      },
+    };
+  }
+
+  // 3. INTENT: Swap Workout Session
   if (lower.includes("swap") || lower.includes("switch session")) {
     const w = context.activeWorkout;
     if (!w.nextSession) {
@@ -232,12 +254,15 @@ export function generateCoachResponse(
     };
   }
 
-  // 7. DEFAULT: Expert Strength & Conditioning Guidance
+  // 7. DEFAULT: Contextual Strength & Conditioning Guidance
+  const w = context.activeWorkout;
+  const currentExercises = w.exercises.map((e) => `${e.exerciseName.replace(/_/g, " ")} (${e.targetLoad}${e.loadUnit})`).join(", ");
+
   return {
-    replyText: `Understood, ${context.profile.name}. Your active mesocycle is operating on autoregulated progressive overload. For your next set on ${context.activeWorkout.sessionName}, maintain a rigid 360° intra-abdominal brace, control the eccentric phase, and drive with maximum intended velocity through the concentric. Ask me for workout targets, macro calculations, or to log any set.`,
+    replyText: `Got it, ${context.profile.name}. Regarding your training on ${w.sessionName}: our targets today are ${currentExercises}. Focus on clean bar path and explosive concentric intent. If you want to check your set targets, swap an exercise, calculate nutrition, or log a working set, just let me know!`,
     actionReceipt: {
       type: "COACH_ADVICE",
-      summary: `Guidance for ${context.activeWorkout.sessionName}`,
+      summary: `Guidance: ${w.sessionName}`,
       badgeColor: "zinc",
     },
   };

@@ -74,11 +74,13 @@ export function CoachDashboard() {
             hour: "2-digit",
             minute: "2-digit",
           });
+          const isPending = item.status === "pending" || item.status === "processing";
           initialMsgs.push({
             id: item.id,
             sender: "user",
             text: item.content,
             timestamp: time,
+            isPending,
           });
 
           if (item.replyContent) {
@@ -126,10 +128,10 @@ export function CoachDashboard() {
 
     try {
       // 1. Submit message to persistent MCP queue in SQLite
-      const submitted = await submitUserChatMessageAction(text);
+      const res = await submitUserChatMessageAction(text);
+      const userMsgId = res.id;
 
-      const userMsgId = submitted.id;
-
+      // 2. Render user message as pending delivery
       setMessages((prev) => [
         ...prev,
         {
@@ -141,43 +143,39 @@ export function CoachDashboard() {
         },
       ]);
 
-      // 2. Poll for the AI Coach's reply
-      const pollInterval = setInterval(async () => {
+      // 3. Poll for AI Coach response over MCP
+      const pollStart = Date.now();
+      const pollTimer = setInterval(async () => {
         try {
-          const status = await getChatMessageStatusAction(userMsgId);
+          const statusRes = await getChatMessageStatusAction(userMsgId);
 
-          if (status.status === "replied" && status.replyContent) {
-            clearInterval(pollInterval);
+          if (statusRes.status === "replied" && statusRes.replyContent) {
+            clearInterval(pollTimer);
             setLoading(false);
 
-            // Update user message to no longer pending
-            setMessages((prev) =>
-              prev.map((m) => (m.id === userMsgId ? { ...m, isPending: false } : m))
-            );
-
-            const replyTime = status.repliedAt
-              ? new Date(status.repliedAt).toLocaleTimeString([], {
+            const replyTime = statusRes.repliedAt
+              ? new Date(statusRes.repliedAt).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
                 })
               : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
             setMessages((prev) => [
-              ...prev,
+              ...prev.map((m) => (m.id === userMsgId ? { ...m, isPending: false } : m)),
               {
                 id: `${userMsgId}-reply`,
                 sender: "coach",
-                text: status.replyContent!,
+                text: statusRes.replyContent!,
                 timestamp: replyTime,
-                badge: status.actionReceipt
+                badge: statusRes.actionReceipt
                   ? {
-                      type: status.actionReceipt.type || "COACH_ADVICE",
-                      summary: status.actionReceipt.summary || "AI Coach Response",
-                      color: status.actionReceipt.badgeColor || "emerald",
+                      type: statusRes.actionReceipt.type || "COACH_ADVICE",
+                      summary: statusRes.actionReceipt.summary || "AI Coach (MCP)",
+                      color: statusRes.actionReceipt.badgeColor || "emerald",
                     }
                   : {
-                      type: "MCP_REPLY",
-                      summary: "AI Coach Direct Response",
+                      type: "COACH_ADVICE",
+                      summary: "AI Coach (MCP)",
                       color: "emerald",
                     },
               },
@@ -190,17 +188,15 @@ export function CoachDashboard() {
                 setIsHardStop(w.status === "aborted");
               }
             });
+          } else if (Date.now() - pollStart > 120000) {
+            // 2 minute timeout
+            clearInterval(pollTimer);
+            setLoading(false);
           }
-        } catch (pollErr) {
-          console.error("Polling error:", pollErr);
+        } catch (err) {
+          console.error("[MCP Poll Error]:", err);
         }
-      }, 1200);
-
-      // Safety timeout after 30 seconds
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        setLoading(false);
-      }, 30000);
+      }, 1000);
     } catch (err: any) {
       setLoading(false);
       setMessages((prev) => [
@@ -208,11 +204,11 @@ export function CoachDashboard() {
         {
           id: crypto.randomUUID(),
           sender: "coach",
-          text: `Error transmitting message to MCP inbox: ${err.message || "Network issue"}`,
+          text: `Error connecting to MCP: ${err.message || "Failed to enqueue message"}`,
           timestamp: now,
           badge: {
             type: "ERROR",
-            summary: "Failed to queue message",
+            summary: "Delivery Failed",
             color: "red",
           },
         },
