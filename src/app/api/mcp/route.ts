@@ -165,9 +165,10 @@ export async function GET(request: Request) {
   const encoder = new TextEncoder();
   session.sseWriter = forwardWriter;
 
-  // Initial endpoint event
-  const handshake = `event: endpoint\ndata: /api/mcp?sessionId=${sessionId}\n\n`;
-  await forwardWriter.write(encoder.encode(handshake));
+  // Initial endpoint event with absolute URL
+  const endpointUrl = `${url.origin}/api/mcp?sessionId=${sessionId}`;
+  const handshake = `event: endpoint\ndata: ${endpointUrl}\n\n`;
+  forwardWriter.write(encoder.encode(handshake)).catch(() => {});
 
   const pingTimer = setInterval(() => {
     forwardWriter.write(encoder.encode(": keepalive\n\n")).catch(() => {
@@ -177,6 +178,16 @@ export async function GET(request: Request) {
       }
     });
   }, 15000);
+
+  request.signal.addEventListener("abort", () => {
+    clearInterval(pingTimer);
+    try {
+      forwardWriter.close();
+    } catch {}
+    if (session?.sseWriter === forwardWriter) {
+      session.sseWriter = null;
+    }
+  });
 
   return new Response(stream.readable, {
     status: 200,
