@@ -5,6 +5,10 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    env: {
+      DATABASE_URL: "file:test.db",
+    },
+    setupFiles: ["./src/__tests__/setup.ts"],
   },
   resolve: {
     alias: {

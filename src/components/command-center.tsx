@@ -17,6 +17,8 @@ import {
 import {
   getNutritionOverviewAction,
   generateNewMesocycleAction,
+  getTodaysWorkoutAction,
+  type TodaysWorkoutView,
 } from "@/app/actions";
 import type { MacroBreakdown, NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -26,8 +28,9 @@ export function CommandCenter() {
   const [goal, setGoal] = useState<NutritionGoal>("maintain");
   const [nutrition, setNutrition] = useState<MacroBreakdown | null>(null);
   const [userName, setUserName] = useState("Athlete");
-  const [weightKg, setWeightKg] = useState(80);
+  const [weightKg, setWeightKg] = useState(0);
   const [preferredUnit, setPreferredUnit] = useState<"kg" | "lb">("kg");
+  const [activeWorkout, setActiveWorkout] = useState<TodaysWorkoutView | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   // Mesocycle Form State
@@ -41,12 +44,15 @@ export function CommandCenter() {
 
   const refreshNutrition = () => {
     getNutritionOverviewAction(goal).then((res) => {
-      if (res.success && res.nutrition) {
+      if (res.success) {
         setNutrition(res.nutrition);
         setUserName(res.userName);
         setWeightKg(res.weightKg);
         setPreferredUnit(res.preferredUnit);
       }
+    });
+    getTodaysWorkoutAction().then((tw) => {
+      setActiveWorkout(tw);
     });
   };
 
@@ -68,6 +74,7 @@ export function CommandCenter() {
         setGenerateMessage(
           `Successfully seeded 4-week ${mesoGoal} mesocycle (${res.workoutSessionsCount} sessions)!`
         );
+        refreshNutrition();
         setTimeout(() => {
           setShowGenerateModal(false);
           setGenerateMessage("");
@@ -218,8 +225,20 @@ export function CommandCenter() {
             </div>
           </>
         ) : (
-          <div className="mt-4 p-4 text-center text-xs font-mono text-zinc-500">
-            Calculating metabolic partitioning...
+          <div className="mt-4 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-2 font-mono">
+            <span className="text-xs font-bold text-zinc-300 block">
+              Biometrics Unconfigured
+            </span>
+            <p className="text-[11px] text-zinc-500">
+              Bodyweight is 0. Configure your body metrics in Profile Setup to calculate live BMR, TDEE, and macro targets.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsProfileOpen(true)}
+              className="mt-1 px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition cursor-pointer"
+            >
+              Open Profile Setup
+            </button>
           </div>
         )}
       </section>
@@ -233,30 +252,57 @@ export function CommandCenter() {
               Active Mesocycle Block
             </h2>
           </div>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold">
-            WEEK 1 / 4
-          </span>
+          {activeWorkout && activeWorkout.sessionId && activeWorkout.sessionName !== "No Active Plan" && (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold">
+              WEEK {activeWorkout.weekNumber} / 4
+            </span>
+          )}
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-mono">
-          <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 block">SPLIT TYPE</span>
-            <span className="font-bold text-zinc-200 capitalize">Push / Pull / Legs</span>
-          </div>
-          <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-            <span className="text-[10px] text-zinc-500 block">FREQUENCY</span>
-            <span className="font-bold text-zinc-200">4 Days / Week</span>
-          </div>
-        </div>
+        {activeWorkout && activeWorkout.sessionId && activeWorkout.sessionName !== "No Active Plan" ? (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-mono">
+              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                <span className="text-[10px] text-zinc-500 block">CURRENT SESSION</span>
+                <span className="font-bold text-zinc-200 capitalize truncate block">
+                  {activeWorkout.sessionName}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
+                <span className="text-[10px] text-zinc-500 block">STATUS</span>
+                <span className="font-bold text-emerald-400 capitalize">
+                  {activeWorkout.isRestDay ? "Rest Day" : `${activeWorkout.exercises.length} Exercises`}
+                </span>
+              </div>
+            </div>
 
-        <button
-          type="button"
-          onClick={() => setShowGenerateModal(true)}
-          className="mt-3 w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Generate / Reset Mesocycle
-        </button>
+            <button
+              type="button"
+              onClick={() => setShowGenerateModal(true)}
+              className="mt-3 w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Generate / Reset Mesocycle
+            </button>
+          </>
+        ) : (
+          <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-2 font-mono">
+            <span className="text-xs font-bold text-zinc-400 block">
+              No Active Mesocycle Block
+            </span>
+            <p className="text-[11px] text-zinc-500">
+              No training plan is active. Generate a personalized 4-week block based on your baseline 1RMs.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowGenerateModal(true)}
+              className="mt-1 w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Generate 4-Week Block
+            </button>
+          </div>
+        )}
       </section>
 
       {/* MUSCLE GROUP WEEKLY VOLUME TARGETS */}

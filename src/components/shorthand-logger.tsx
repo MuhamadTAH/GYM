@@ -56,7 +56,7 @@ interface RecentSetDisplay {
 export function ShorthandLogger() {
   const [input, setInput] = useState("");
   const [activeExercise, setActiveExercise] = useState("bench_press");
-  const [currentLoad, setCurrentLoad] = useState<number>(100);
+  const [currentLoad, setCurrentLoad] = useState<number>(0);
   const [preferredUnit, setPreferredUnit] = useState<"kg" | "lb">("kg");
   const [userOverride, setUserOverride] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
@@ -362,6 +362,24 @@ export function ShorthandLogger() {
               >
                 <FastForward className="w-4 h-4" />
                 Skip Rest & Start Next Workout
+              </button>
+            </div>
+          ) : todaysWorkout.exercises.length === 0 ? (
+            <div className="mt-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-center space-y-3 font-mono">
+              <div className="flex items-center justify-center gap-2 text-zinc-400 font-bold text-xs">
+                <Dumbbell className="w-4 h-4 text-indigo-400" />
+                <span>No Active Workout Plan</span>
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                You have no active mesocycle scheduled. Configure your athlete profile baseline 1RMs to generate your personalized 4-week training block.
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen(true)}
+                className="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 transition cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                Configure Profile & Generate Plan
               </button>
             </div>
           ) : (

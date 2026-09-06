@@ -29,25 +29,25 @@ interface ProfileModalProps {
 
 export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
   const [name, setName] = useState("Athlete");
-  const [age, setAge] = useState(26);
+  const [age, setAge] = useState(0);
   const [sex, setSex] = useState<"male" | "female" | "other">("male");
-  const [heightCm, setHeightCm] = useState(178);
+  const [heightCm, setHeightCm] = useState(0);
   const [unit, setUnit] = useState<"kg" | "lb">("kg");
-  const [weight, setWeight] = useState(82);
+  const [weight, setWeight] = useState(0);
 
   // Baseline 1RMs
-  const [squat1rm, setSquat1rm] = useState(140);
-  const [bench1rm, setBench1rm] = useState(100);
-  const [deadlift1rm, setDeadlift1rm] = useState(180);
-  const [ohp1rm, setOhp1rm] = useState(65);
-  const [row1rm, setRow1rm] = useState(85);
-  const [pullup1rm, setPullup1rm] = useState(30);
+  const [squat1rm, setSquat1rm] = useState(0);
+  const [bench1rm, setBench1rm] = useState(0);
+  const [deadlift1rm, setDeadlift1rm] = useState(0);
+  const [ohp1rm, setOhp1rm] = useState(0);
+  const [row1rm, setRow1rm] = useState(0);
+  const [pullup1rm, setPullup1rm] = useState(0);
 
   // Rep-to-1RM Calculator State
   const [showRepCalc, setShowRepCalc] = useState(false);
   const [calcLift, setCalcLift] = useState<keyof BaselineLifts>("bench_press_1rm");
-  const [calcWeight, setCalcWeight] = useState(80);
-  const [calcReps, setCalcReps] = useState(8);
+  const [calcWeight, setCalcWeight] = useState(0);
+  const [calcReps, setCalcReps] = useState(0);
 
   // Active Injuries
   const [hasKneeInjury, setHasKneeInjury] = useState(false);
@@ -257,7 +257,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <label className="text-[11px] text-zinc-400 block mb-1">Age (yr)</label>
                 <input
                   type="number"
-                  value={age}
+                  value={age || ""}
+                  placeholder="0"
                   onChange={(e) => setAge(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-emerald-500 focus:outline-none"
                 />
@@ -266,7 +267,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <label className="text-[11px] text-zinc-400 block mb-1">Height (cm)</label>
                 <input
                   type="number"
-                  value={heightCm}
+                  value={heightCm || ""}
+                  placeholder="0"
                   onChange={(e) => setHeightCm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-emerald-500 focus:outline-none"
                 />
@@ -277,7 +279,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                   <input
                     type="number"
                     step="0.5"
-                    value={weight}
+                    value={weight || ""}
+                    placeholder="0"
                     onChange={(e) => setWeight(Number(e.target.value))}
                     className="w-full px-2 py-1.5 rounded-l-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-emerald-500 focus:outline-none"
                   />
@@ -345,7 +348,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                     <input
                       type="number"
                       step="2.5"
-                      value={calcWeight}
+                      value={calcWeight || ""}
+                      placeholder="0"
                       onChange={(e) => setCalcWeight(Number(e.target.value))}
                       className="w-full px-2 py-1.5 rounded-lg bg-zinc-950 border border-indigo-800 text-white font-bold"
                     />
@@ -356,7 +360,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                       type="number"
                       min="1"
                       max="20"
-                      value={calcReps}
+                      value={calcReps || ""}
+                      placeholder="0"
                       onChange={(e) => setCalcReps(Number(e.target.value))}
                       className="w-full px-2 py-1.5 rounded-lg bg-zinc-950 border border-indigo-800 text-white font-bold"
                     />
@@ -380,7 +385,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={squat1rm}
+                  value={squat1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setSquat1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />
@@ -390,7 +396,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={bench1rm}
+                  value={bench1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setBench1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />
@@ -400,7 +407,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={deadlift1rm}
+                  value={deadlift1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setDeadlift1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />
@@ -410,7 +418,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={ohp1rm}
+                  value={ohp1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setOhp1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />
@@ -420,7 +429,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={row1rm}
+                  value={row1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setRow1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />
@@ -430,7 +440,8 @@ export function ProfileModal({ isOpen, onClose, onSaved }: ProfileModalProps) {
                 <input
                   type="number"
                   step="2.5"
-                  value={pullup1rm}
+                  value={pullup1rm || ""}
+                  placeholder="0"
                   onChange={(e) => setPullup1rm(Number(e.target.value))}
                   className="w-full px-2.5 py-1.5 rounded-lg bg-zinc-950 border border-zinc-800 text-white font-bold focus:border-indigo-500 focus:outline-none"
                 />

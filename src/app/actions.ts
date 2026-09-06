@@ -61,24 +61,24 @@ export async function getOrCreateActiveSession(): Promise<{
       id: userId,
       name: "Athlete",
       email: "athlete@gym.local",
-      age: 26,
+      age: 0,
       sex: "male",
-      heightCm: 178,
+      heightCm: 0,
       preferredUnit: "kg",
-      currentWeightValue: 82.0,
+      currentWeightValue: 0,
       currentWeightUnit: "kg",
-      sevenDayWeightMedian: 82.0,
-      coldStartActive: false,
-      coldStartDaysRemaining: 0,
-      trainingAge: "intermediate",
+      sevenDayWeightMedian: 0,
+      coldStartActive: true,
+      coldStartDaysRemaining: 14,
+      trainingAge: "novice",
       rawWeightHistory: [],
       baselineLifts: {
-        squat_1rm: 140,
-        bench_press_1rm: 100,
-        deadlift_1rm: 180,
-        overhead_press_1rm: 65,
-        barbell_row_1rm: 85,
-        pull_up_1rm: 30,
+        squat_1rm: 0,
+        bench_press_1rm: 0,
+        deadlift_1rm: 0,
+        overhead_press_1rm: 0,
+        barbell_row_1rm: 0,
+        pull_up_1rm: 0,
       },
       activeInjuries: [],
       createdAt: new Date().toISOString(),
@@ -437,8 +437,20 @@ export async function generateNewMesocycleAction(params?: {
  * Never looks at calendar day; avoids the Missed-Day Glitch.
  */
 export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
-  const sessionContext = await getOrCreateActiveSession();
-  const { userId, preferredUnit } = sessionContext;
+  const existingUsers = await db.select().from(userProfiles).limit(1);
+  if (existingUsers.length === 0) {
+    return {
+      sessionId: "",
+      sessionName: "No Active Plan",
+      sessionType: "custom",
+      status: "planned",
+      isRestDay: false,
+      exercises: [],
+      weekNumber: 1,
+      dayIndex: 1,
+    };
+  }
+  const userId = existingUsers[0].id;
 
   // Query uncompleted sessions in sequence order (startedAt ASC)
   let uncompleted = await db
@@ -453,20 +465,18 @@ export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
     )
     .orderBy(asc(workoutSessions.startedAt));
 
-  // If no uncompleted sessions exist, generate fresh mesocycle
+  // If no uncompleted sessions exist, do not auto-generate mock mesocycle!
   if (uncompleted.length === 0) {
-    await generateNewMesocycleAction();
-    uncompleted = await db
-      .select()
-      .from(workoutSessions)
-      .where(
-        and(
-          eq(workoutSessions.userId, userId),
-          ne(workoutSessions.status, "completed"),
-          ne(workoutSessions.status, "aborted")
-        )
-      )
-      .orderBy(asc(workoutSessions.startedAt));
+    return {
+      sessionId: "",
+      sessionName: "No Active Plan",
+      sessionType: "custom",
+      status: "planned",
+      isRestDay: false,
+      exercises: [],
+      weekNumber: 1,
+      dayIndex: 1,
+    };
   }
 
   const currentSession = uncompleted[0];
@@ -788,9 +798,9 @@ export async function getUserProfileAction(): Promise<UserProfileView> {
 
   const u = users[0];
   const isUnconfigured =
-    u.name === "Athlete" &&
-    u.baselineLifts.squat_1rm === 140 &&
-    u.baselineLifts.bench_press_1rm === 100;
+    u.baselineLifts.squat_1rm === 0 &&
+    u.baselineLifts.bench_press_1rm === 0 &&
+    u.currentWeightValue === 0;
 
   return {
     id: u.id,
@@ -878,18 +888,15 @@ export async function getNutritionOverviewAction(goal: NutritionGoal = "maintain
   heightCm: number;
   preferredUnit: "kg" | "lb";
 }> {
-  const sessionContext = await getOrCreateActiveSession();
-  const { userId, preferredUnit } = sessionContext;
-
-  const users = await db.select().from(userProfiles).where(eq(userProfiles.id, userId)).limit(1);
+  const users = await db.select().from(userProfiles).limit(1);
   if (users.length === 0) {
     return {
-      success: false,
+      success: true,
       nutrition: null,
       userName: "Athlete",
-      weightKg: 80,
-      heightCm: 178,
-      preferredUnit,
+      weightKg: 0,
+      heightCm: 0,
+      preferredUnit: "kg",
     };
   }
 
@@ -898,6 +905,17 @@ export async function getNutritionOverviewAction(goal: NutritionGoal = "maintain
     user.preferredUnit === "lb"
       ? Math.round(user.currentWeightValue * 0.453592 * 10) / 10
       : user.currentWeightValue;
+
+  if (weightKg <= 0 || user.heightCm <= 0 || user.age <= 0) {
+    return {
+      success: true,
+      nutrition: null,
+      userName: user.name,
+      weightKg: 0,
+      heightCm: user.heightCm,
+      preferredUnit: user.preferredUnit,
+    };
+  }
 
   const nutrition = calculateMacroTargets({
     weightKg,
