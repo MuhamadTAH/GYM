@@ -150,3 +150,25 @@ export type InsertWorkoutSessionRow = typeof workoutSessions.$inferInsert;
 
 export type ExerciseSetRow = typeof exerciseSets.$inferSelect;
 export type InsertExerciseSetRow = typeof exerciseSets.$inferInsert;
+
+/**
+ * CORE RELATIONAL TABLE: coach_messages (Live Agent Bridge)
+ */
+export const coachMessages = sqliteTable("coach_messages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => userProfiles.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  status: text("status", { enum: ["pending", "processing", "replied"] })
+    .notNull()
+    .default("pending"),
+  replyContent: text("reply_content"),
+  actionReceipt: text("action_receipt", { mode: "json" }),
+  createdAt: text("created_at").notNull(),
+  repliedAt: text("replied_at"),
+});
+
+export type CoachMessageRow = typeof coachMessages.$inferSelect;
+export type InsertCoachMessageRow = typeof coachMessages.$inferInsert;
+

@@ -29,15 +29,16 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     await client.close();
   });
 
-  it("lists all 4 read-only resources with exact URIs", async () => {
+  it("lists all 5 read-only resources with exact URIs", async () => {
     const res = await client.listResources();
-    expect(res.resources).toHaveLength(4);
+    expect(res.resources).toHaveLength(5);
 
     const uris = res.resources.map((r) => r.uri);
     expect(uris).toContain("gym://profile");
     expect(uris).toContain("gym://session/active");
     expect(uris).toContain("gym://mesocycle/summary");
     expect(uris).toContain("gym://history/recent");
+    expect(uris).toContain("gym://chat/pending");
   });
 
   it("reads gym://profile resource correctly", async () => {
@@ -86,9 +87,18 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(Array.isArray(history)).toBe(true);
   });
 
-  it("lists all 6 action & state mutation tools", async () => {
+  it("reads gym://chat/pending resource correctly", async () => {
+    const res = await client.readResource({ uri: "gym://chat/pending" });
+    expect(res.contents).toHaveLength(1);
+
+    const textContent = res.contents[0] as { text: string };
+    const pending = JSON.parse(textContent.text);
+    expect(Array.isArray(pending)).toBe(true);
+  });
+
+  it("lists all 8 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(6);
+    expect(res.tools).toHaveLength(8);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -97,6 +107,8 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("calculate_nutrition");
     expect(toolNames).toContain("generate_mesocycle");
     expect(toolNames).toContain("swap_workout_order");
+    expect(toolNames).toContain("get_pending_chat_messages");
+    expect(toolNames).toContain("post_chat_reply");
   });
 
   it("calls calculate_nutrition tool deterministically", async () => {

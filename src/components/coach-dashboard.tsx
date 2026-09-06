@@ -4,22 +4,25 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Send,
   Bot,
-  User,
   Sparkles,
-  AlertTriangle,
   CheckCircle2,
-  Dumbbell,
-  Apple,
-  RefreshCw,
   ShieldAlert,
+  Clock,
 } from "lucide-react";
-import { sendCoachMessageAction, type CoachActionResult, getUserProfileAction, getTodaysWorkoutAction } from "@/app/actions";
+import {
+  submitUserChatMessageAction,
+  getChatMessageStatusAction,
+  getChatHistoryAction,
+  getUserProfileAction,
+  getTodaysWorkoutAction,
+} from "@/app/actions";
 
 interface ChatMessage {
   id: string;
   sender: "user" | "coach";
   text: string;
   timestamp: string;
+  isPending?: boolean;
   badge?: {
     type: string;
     summary: string;
@@ -36,32 +39,75 @@ export function CoachDashboard() {
   const [isHardStop, setIsHardStop] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize coach dashboard with live state
+  // Initialize coach dashboard with live state & message history
   useEffect(() => {
-    Promise.all([getUserProfileAction(), getTodaysWorkoutAction()]).then(
-      ([profile, workout]) => {
-        if (profile) setAthleteName(profile.name);
-        if (workout) {
-          setActiveSessionName(workout.sessionName);
-          setIsHardStop(workout.status === "aborted");
-        }
-
-        // Add initial greeting from coach
-        setMessages([
-          {
-            id: "welcome",
-            sender: "coach",
-            text: `Welcome back, ${profile?.name || "Athlete"}. I am your dedicated Autoregulated S&C Coach. I have full real-time access to your 1RMs, active mesocycle (${workout?.sessionName}), and nutrition targets. Ask me anything, or type shorthand commands to log sets.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            badge: {
-              type: "COACH_ADVICE",
-              summary: "Connected to gym.db • Layer 0 Active",
-              color: "emerald",
-            },
-          },
-        ]);
+    Promise.all([
+      getUserProfileAction(),
+      getTodaysWorkoutAction(),
+      getChatHistoryAction(),
+    ]).then(([profile, workout, history]) => {
+      if (profile) setAthleteName(profile.name);
+      if (workout) {
+        setActiveSessionName(workout.sessionName);
+        setIsHardStop(workout.status === "aborted");
       }
-    );
+
+      const initialMsgs: ChatMessage[] = [];
+
+      // Add system greeting
+      initialMsgs.push({
+        id: "welcome",
+        sender: "coach",
+        text: `Welcome, ${profile?.name || "Athlete"}. I am your dedicated Autoregulated S&C Coach connected directly via MCP to your database. Any message you type here is delivered directly to me. Ask questions, report feedback, or plan your next phase.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        badge: {
+          type: "MCP_CONNECTED",
+          summary: "Live AI Agent Link Active",
+          color: "emerald",
+        },
+      });
+
+      // Load previous persisted history from SQLite
+      if (history && history.length > 0) {
+        for (const item of history) {
+          const time = new Date(item.createdAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          initialMsgs.push({
+            id: item.id,
+            sender: "user",
+            text: item.content,
+            timestamp: time,
+          });
+
+          if (item.replyContent) {
+            const replyTime = item.repliedAt
+              ? new Date(item.repliedAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : time;
+
+            initialMsgs.push({
+              id: `${item.id}-reply`,
+              sender: "coach",
+              text: item.replyContent,
+              timestamp: replyTime,
+              badge: item.actionReceipt
+                ? {
+                    type: item.actionReceipt.type || "COACH_ADVICE",
+                    summary: item.actionReceipt.summary || "Coach Guidance",
+                    color: item.actionReceipt.badgeColor || "emerald",
+                  }
+                : undefined,
+            });
+          }
+        }
+      }
+
+      setMessages(initialMsgs);
+    });
   }, []);
 
   // Auto-scroll to bottom of messages
@@ -73,68 +119,104 @@ export function CoachDashboard() {
     const text = (textToSend || inputText).trim();
     if (!text || loading) return;
 
-    const userMsgId = crypto.randomUUID();
-    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-    // Append user message immediately
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: userMsgId,
-        sender: "user",
-        text,
-        timestamp: now,
-      },
-    ]);
-
     if (!textToSend) setInputText("");
     setLoading(true);
 
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
     try {
-      const res: CoachActionResult = await sendCoachMessageAction(text, true);
+      // 1. Submit message to persistent MCP queue in SQLite
+      const submitted = await submitUserChatMessageAction(text);
 
-      // Check if session status updated
-      if (res.currentWorkout) {
-        setActiveSessionName(res.currentWorkout.sessionName);
-        setIsHardStop(res.currentWorkout.status === "aborted");
-      }
-
-      const coachMsgId = crypto.randomUUID();
-      const replyTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const userMsgId = submitted.id;
 
       setMessages((prev) => [
         ...prev,
         {
-          id: coachMsgId,
-          sender: "coach",
-          text: res.replyText,
-          timestamp: replyTime,
-          badge: res.actionReceipt
-            ? {
-                type: res.actionReceipt.type,
-                summary: res.actionReceipt.summary,
-                color: res.actionReceipt.badgeColor,
-              }
-            : undefined,
+          id: userMsgId,
+          sender: "user",
+          text,
+          timestamp: now,
+          isPending: true,
         },
       ]);
+
+      // 2. Poll for the AI Coach's reply
+      const pollInterval = setInterval(async () => {
+        try {
+          const status = await getChatMessageStatusAction(userMsgId);
+
+          if (status.status === "replied" && status.replyContent) {
+            clearInterval(pollInterval);
+            setLoading(false);
+
+            // Update user message to no longer pending
+            setMessages((prev) =>
+              prev.map((m) => (m.id === userMsgId ? { ...m, isPending: false } : m))
+            );
+
+            const replyTime = status.repliedAt
+              ? new Date(status.repliedAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `${userMsgId}-reply`,
+                sender: "coach",
+                text: status.replyContent!,
+                timestamp: replyTime,
+                badge: status.actionReceipt
+                  ? {
+                      type: status.actionReceipt.type || "COACH_ADVICE",
+                      summary: status.actionReceipt.summary || "AI Coach Response",
+                      color: status.actionReceipt.badgeColor || "emerald",
+                    }
+                  : {
+                      type: "MCP_REPLY",
+                      summary: "AI Coach Direct Response",
+                      color: "emerald",
+                    },
+              },
+            ]);
+
+            // Refresh workout status if session was updated
+            getTodaysWorkoutAction().then((w) => {
+              if (w) {
+                setActiveSessionName(w.sessionName);
+                setIsHardStop(w.status === "aborted");
+              }
+            });
+          }
+        } catch (pollErr) {
+          console.error("Polling error:", pollErr);
+        }
+      }, 1200);
+
+      // Safety timeout after 30 seconds
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setLoading(false);
+      }, 30000);
     } catch (err: any) {
+      setLoading(false);
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           sender: "coach",
-          text: `Error connecting to engine: ${err.message || "Failed to process request."}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          text: `Error transmitting message to MCP inbox: ${err.message || "Network issue"}`,
+          timestamp: now,
           badge: {
             type: "ERROR",
-            summary: "Execution error",
+            summary: "Failed to queue message",
             color: "red",
           },
         },
       ]);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -198,7 +280,7 @@ export function CoachDashboard() {
           ) : (
             <>
               <CheckCircle2 className="w-3 h-3" />
-              LAYER 0 SAFE
+              MCP ACTIVE
             </>
           )}
         </div>
@@ -237,7 +319,7 @@ export function CoachDashboard() {
                 ) : (
                   <>
                     <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-emerald-400" /> COACH
+                      <Sparkles className="w-3 h-3 text-emerald-400" /> AI COACH (MCP)
                     </span>
                     <span className="text-[10px] text-zinc-500">{m.timestamp}</span>
                   </>
@@ -252,6 +334,14 @@ export function CoachDashboard() {
                 }`}
               >
                 {m.text}
+
+                {/* Pending Delivery Indicator */}
+                {m.isPending && (
+                  <div className="mt-2 pt-1.5 border-t border-emerald-500/30 flex items-center gap-1.5 text-[10px] font-mono text-emerald-100">
+                    <Clock className="w-3 h-3 animate-spin" />
+                    <span>Transmitted to AI Coach via MCP... awaiting response</span>
+                  </div>
+                )}
 
                 {/* Structured Action Receipt Badge */}
                 {m.badge && (
@@ -273,14 +363,14 @@ export function CoachDashboard() {
           <div className="flex flex-col items-start">
             <div className="flex items-center gap-1.5 mb-1 px-1">
               <span className="text-[10px] font-bold text-zinc-400 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-emerald-400 animate-spin" /> COACH
+                <Sparkles className="w-3 h-3 text-emerald-400 animate-spin" /> AI COACH
               </span>
             </div>
             <div className="bg-zinc-900/90 border border-zinc-800 text-zinc-400 rounded-xl px-4 py-2.5 text-xs rounded-tl-none flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" />
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.2s]" />
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.4s]" />
-              <span className="text-[11px] text-zinc-500 ml-1">Analyzing telemetry...</span>
+              <span className="text-[11px] text-zinc-500 ml-1">AI Coach reviewing training data...</span>
             </div>
           </div>
         )}
@@ -301,7 +391,7 @@ export function CoachDashboard() {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Ask coach anything or type 'sq 140 5x5 rpe8'..."
+            placeholder="Type your message to the AI coach..."
             disabled={loading}
             className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition disabled:opacity-50"
           />
@@ -314,7 +404,7 @@ export function CoachDashboard() {
           </button>
         </form>
         <p className="text-[10px] font-mono text-zinc-500 text-center mt-1.5">
-          Type freeform questions or shorthand sets • Direct sync with gym.db
+          Messages are dispatched directly to the AI Coach over MCP
         </p>
       </div>
     </div>

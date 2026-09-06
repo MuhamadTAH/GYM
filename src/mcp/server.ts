@@ -9,7 +9,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { db } from "@/db";
-import { workoutSessions } from "@/db/schema";
+import { workoutSessions, coachMessages } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import {
   getOrCreateActiveSession,
@@ -20,6 +20,7 @@ import {
   triggerManualHardStopAction,
   generateNewMesocycleAction,
   swapSessionOrderAction,
+  postChatReplyAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -77,6 +78,13 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
         name: "Recent Exercise Sets History",
         description:
           "Returns the last 10 logged exercise sets with RPE, load, reps, and acute pain telemetry.",
+        mimeType: "application/json",
+      },
+      {
+        uri: "gym://chat/pending",
+        name: "Pending Athlete Chat Messages",
+        description:
+          "Returns all pending athlete messages sent from the dashboard waiting for AI response.",
         mimeType: "application/json",
       },
     ],
@@ -170,6 +178,23 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             uri,
             mimeType: "application/json",
             text: JSON.stringify(sets, null, 2),
+          },
+        ],
+      };
+    }
+
+    case "gym://chat/pending": {
+      const pending = await db
+        .select()
+        .from(coachMessages)
+        .where(eq(coachMessages.status, "pending"))
+        .orderBy(asc(coachMessages.createdAt));
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(pending, null, 2),
           },
         ],
       };
@@ -296,6 +321,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           properties: {},
+        },
+      },
+      {
+        name: "get_pending_chat_messages",
+        description:
+          "Retrieve all incoming messages sent by the athlete from the dashboard waiting for an AI response.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "post_chat_reply",
+        description:
+          "Post an AI coaching answer back to the athlete on the dashboard for a specific message ID.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            message_id: {
+              type: "string",
+              description: "The unique ID of the message being answered.",
+            },
+            reply_text: {
+              type: "string",
+              description: "The AI coach's thoughtful, personalized response to the athlete.",
+            },
+            badge_summary: {
+              type: "string",
+              description: "Optional short summary tag for the response badge (e.g., 'Plan Adjusted', 'Technique Tip').",
+            },
+          },
+          required: ["message_id", "reply_text"],
         },
       },
     ],
@@ -466,6 +523,68 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   message: result.message,
                   nowActiveSession: updatedWorkout.sessionName,
                   swappedOutSession: activeWorkout.sessionName,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "get_pending_chat_messages": {
+        const pending = await db
+          .select()
+          .from(coachMessages)
+          .where(eq(coachMessages.status, "pending"))
+          .orderBy(asc(coachMessages.createdAt));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  pending_count: pending.length,
+                  messages: pending,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "post_chat_reply": {
+        const messageId = String(args?.message_id);
+        const replyText = String(args?.reply_text);
+        const badgeSummary = (args?.badge_summary as string) || "Coach Reply";
+
+        if (!messageId || !replyText) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "post_chat_reply requires 'message_id' and 'reply_text'."
+          );
+        }
+
+        const actionReceipt = {
+          type: "COACH_ADVICE",
+          summary: badgeSummary,
+          badgeColor: "emerald",
+        };
+
+        const result = await postChatReplyAction(messageId, replyText, actionReceipt);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: result.success,
+                  message_id: messageId,
+                  status: "replied",
                 },
                 null,
                 2

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { userProfiles, workoutSessions, exerciseSets } from "@/db/schema";
+import { userProfiles, workoutSessions, exerciseSets, coachMessages } from "@/db/schema";
 import { eq, desc, asc, and, ne } from "drizzle-orm";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
@@ -981,4 +981,111 @@ export async function sendCoachMessageAction(
     currentWorkout: updatedWorkout,
   };
 }
+
+/**
+ * Submit user message to the live MCP queue for the AI to answer
+ */
+export async function submitUserChatMessageAction(content: string): Promise<{
+  id: string;
+  success: boolean;
+  content: string;
+}> {
+  const sessionContext = await getOrCreateActiveSession();
+  const { userId } = sessionContext;
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await db.insert(coachMessages).values({
+    id,
+    userId,
+    content,
+    status: "pending",
+    createdAt: now,
+  });
+
+  return { id, success: true, content };
+}
+
+/**
+ * Check if a chat message has been answered by the AI
+ */
+export async function getChatMessageStatusAction(messageId: string): Promise<{
+  id: string;
+  status: "pending" | "processing" | "replied";
+  content: string;
+  replyContent?: string | null;
+  actionReceipt?: any;
+  createdAt: string;
+  repliedAt?: string | null;
+}> {
+  const msgs = await db
+    .select()
+    .from(coachMessages)
+    .where(eq(coachMessages.id, messageId))
+    .limit(1);
+
+  if (msgs.length === 0) {
+    throw new Error("Message not found");
+  }
+
+  const m = msgs[0];
+  return {
+    id: m.id,
+    status: m.status as any,
+    content: m.content,
+    replyContent: m.replyContent,
+    actionReceipt: m.actionReceipt,
+    createdAt: m.createdAt,
+    repliedAt: m.repliedAt,
+  };
+}
+
+/**
+ * Fetch recent chat history from the persistent message queue
+ */
+export async function getChatHistoryAction(): Promise<Array<{
+  id: string;
+  content: string;
+  status: string;
+  replyContent?: string | null;
+  actionReceipt?: any;
+  createdAt: string;
+  repliedAt?: string | null;
+}>> {
+  const sessionContext = await getOrCreateActiveSession();
+  const { userId } = sessionContext;
+
+  const msgs = await db
+    .select()
+    .from(coachMessages)
+    .where(eq(coachMessages.userId, userId))
+    .orderBy(asc(coachMessages.createdAt))
+    .limit(50);
+
+  return msgs;
+}
+
+/**
+ * Reply to an athlete's message in the queue (invoked by the AI agent via MCP or bridge)
+ */
+export async function postChatReplyAction(
+  messageId: string,
+  replyText: string,
+  actionReceipt?: any
+): Promise<{ success: boolean; messageId: string }> {
+  const now = new Date().toISOString();
+
+  await db
+    .update(coachMessages)
+    .set({
+      status: "replied",
+      replyContent: replyText,
+      actionReceipt: actionReceipt || null,
+      repliedAt: now,
+    })
+    .where(eq(coachMessages.id, messageId));
+
+  return { success: true, messageId };
+}
+
 
