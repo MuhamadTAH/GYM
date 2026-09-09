@@ -19,6 +19,7 @@ import {
   Info,
   X,
   Calendar,
+  RefreshCw,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -95,6 +96,24 @@ export function GoalsDashboard() {
 
   useEffect(() => {
     refreshGoals();
+
+    // Auto-refresh whenever user switches back to this browser tab (e.g. after Gemini calls MCP)
+    const onFocus = () => {
+      refreshGoals();
+    };
+    window.addEventListener("focus", onFocus);
+
+    // Periodic poll every 5 seconds when visible to keep in sync with background AI mutations
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refreshGoals();
+      }
+    }, 5000);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearInterval(interval);
+    };
   }, []);
 
   const handleSaveGoals = (e: React.FormEvent) => {
@@ -244,6 +263,16 @@ export function GoalsDashboard() {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={refreshGoals}
+            className="text-xs font-mono px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border border-zinc-700 flex items-center gap-1.5 transition cursor-pointer"
+            title="Refresh latest goals and tracking from server"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+
           {hasAnyTargetSet && (
             <button
               type="button"
