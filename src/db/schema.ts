@@ -227,9 +227,24 @@ export const athleteDailyGoals = sqliteTable("athlete_daily_goals", {
   todayTrainingCompleted: integer("today_training_completed", { mode: "boolean" })
     .notNull()
     .default(false),
+  todayLoggedItems: text("today_logged_items", { mode: "json" }).$type<LoggedItem[]>(),
 
   updatedAt: text("updated_at").notNull(),
 });
+
+export interface LoggedItem {
+  id: string;
+  timestamp: string;
+  rawText: string;
+  name: string;
+  category: "food" | "water" | "walk" | "training" | "custom";
+  calories: number;
+  protein: number;
+  waterLiters: number;
+  walkMinutes: number;
+  trainingCompleted: boolean;
+  summary: string;
+}
 
 export interface WeeklySplitDay {
   day: string;

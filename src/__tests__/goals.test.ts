@@ -3,6 +3,8 @@ import {
   getDailyGoalsAction,
   saveDailyGoalsAction,
   logDailyMetricAction,
+  logNaturalEntryAction,
+  deleteLoggedItemAction,
   resetDailyTrackingAction,
   clearAllGoalsAction,
   getRecommendedWeeklyPlanAction,
@@ -38,6 +40,7 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(goals.todayWaterLiters).toBe(0);
     expect(goals.todayWalkMinutes).toBe(0);
     expect(goals.todayTrainingCompleted).toBe(false);
+    expect(goals.todayLoggedItems).toEqual([]);
   });
 
   it("saves custom athlete goals, weekly split schedule, and monthly mesocycle block", async () => {
@@ -189,5 +192,36 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(monthly.monthlyPhases[0].weekNumber).toBe(1);
     expect(monthly.monthlyPhases[3].weekNumber).toBe(4);
     expect(monthly.monthlyPhases[3].phaseName).toContain("Deload");
+  });
+
+  it("logs natural food entries ('4 eggs') automatically measuring calories and protein, and supports deletion", async () => {
+    // 1. Log "4 eggs"
+    const logRes = await logNaturalEntryAction({ text: "I ate 4 eggs" });
+    expect(logRes.success).toBe(true);
+    expect(logRes.goals.todayCalories).toBe(288);
+    expect(logRes.goals.todayProtein).toBe(24);
+    expect(logRes.goals.todayLoggedItems).toHaveLength(1);
+    expect(logRes.loggedItem).toBeDefined();
+
+    const itemId = logRes.loggedItem!.id;
+
+    // 2. Log "500ml water"
+    const logWater = await logNaturalEntryAction({ text: "drank 500ml water" });
+    expect(logWater.success).toBe(true);
+    expect(logWater.goals.todayWaterLiters).toBe(0.5);
+    expect(logWater.goals.todayLoggedItems).toHaveLength(2);
+
+    // 3. Delete the "4 eggs" item
+    const delRes = await deleteLoggedItemAction(itemId);
+    expect(delRes.success).toBe(true);
+    expect(delRes.goals.todayCalories).toBe(0);
+    expect(delRes.goals.todayProtein).toBe(0);
+    expect(delRes.goals.todayWaterLiters).toBe(0.5); // water preserved
+    expect(delRes.goals.todayLoggedItems).toHaveLength(1);
+
+    // 4. Reset today clears all
+    const resetRes = await resetDailyTrackingAction();
+    expect(resetRes.goals.todayWaterLiters).toBe(0);
+    expect(resetRes.goals.todayLoggedItems).toHaveLength(0);
   });
 });

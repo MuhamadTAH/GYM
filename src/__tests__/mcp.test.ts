@@ -107,9 +107,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(goals.userId).toBeDefined();
   });
 
-  it("lists all 13 action & state mutation tools", async () => {
+  it("lists all 15 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(13);
+    expect(res.tools).toHaveLength(15);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -125,6 +125,8 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("get_training_plans");
     expect(toolNames).toContain("update_training_plans");
     expect(toolNames).toContain("get_recommended_plans");
+    expect(toolNames).toContain("log_natural_entry");
+    expect(toolNames).toContain("delete_logged_entry");
   });
 
   it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
@@ -191,6 +193,32 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(planPayload.weeklyPlan.weeklyWorkoutsTarget).toBe(4);
     expect(planPayload.weeklyPlan.weeklyWalkMinutesTarget).toBe(160);
     expect(planPayload.monthlyMesocycle.monthlyMesocycleName).toBe("Strength Peaking Block");
+  });
+
+  it("calls log_natural_entry and delete_logged_entry tools via MCP", async () => {
+    const logRes = await client.callTool({
+      name: "log_natural_entry",
+      arguments: {
+        text: "I ate 4 eggs",
+      },
+    });
+    expect(logRes.isError).toBeFalsy();
+    const logPayload = JSON.parse(((logRes as any).content[0] as { text: string }).text);
+    expect(logPayload.success).toBe(true);
+    expect(logPayload.goals.todayCalories).toBeGreaterThan(0);
+    expect(logPayload.loggedItem).toBeDefined();
+
+    const itemId = logPayload.loggedItem.id;
+
+    const delRes = await client.callTool({
+      name: "delete_logged_entry",
+      arguments: {
+        item_id: itemId,
+      },
+    });
+    expect(delRes.isError).toBeFalsy();
+    const delPayload = JSON.parse(((delRes as any).content[0] as { text: string }).text);
+    expect(delPayload.success).toBe(true);
   });
 
   it("calls calculate_nutrition tool deterministically", async () => {

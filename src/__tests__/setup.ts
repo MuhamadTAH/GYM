@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	today_water_liters real DEFAULT 0 NOT NULL,
 	today_walk_minutes real DEFAULT 0 NOT NULL,
 	today_training_completed integer DEFAULT false NOT NULL,
+	today_logged_items text,
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );

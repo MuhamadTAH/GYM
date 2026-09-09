@@ -11,27 +11,24 @@ import {
   CheckCircle2,
   Circle,
   RotateCcw,
-  Edit3,
-  Plus,
-  Trash2,
   Sliders,
   Sparkles,
-  Info,
   X,
-  Calendar,
   RefreshCw,
   CalendarDays,
   Layers,
+  ChevronRight,
+  Plus,
+  Trash2,
   Check,
-  TrendingDown,
-  ShieldCheck,
-  Award,
+  Send,
   Zap,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
   saveDailyGoalsAction,
-  logDailyMetricAction,
+  logNaturalEntryAction,
+  deleteLoggedItemAction,
   resetDailyTrackingAction,
   clearAllGoalsAction,
   getRecommendedWeeklyPlanAction,
@@ -39,50 +36,17 @@ import {
   type DailyGoalsData,
   type SaveDailyGoalsInput,
 } from "@/app/actions";
-import type { WeeklySplitDay, MonthlyPhase } from "@/db/schema";
+import type { LoggedItem, WeeklySplitDay, MonthlyPhase } from "@/db/schema";
 
 export function GoalsDashboard() {
   const [goals, setGoals] = useState<DailyGoalsData | null>(null);
-  const [periodTab, setPeriodTab] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [naturalInput, setNaturalInput] = useState("");
+  const [activePlanTab, setActivePlanTab] = useState<"weekly" | "monthly" | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [isWeeklyConfigOpen, setIsWeeklyConfigOpen] = useState(false);
-  const [isMonthlyConfigOpen, setIsMonthlyConfigOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  // Form state for weekly plan
-  const [weeklyForm, setWeeklyForm] = useState<{
-    weeklyWorkoutsTarget: string;
-    weeklyWalkMinutesTarget: string;
-    weeklyCalorieDeficitTarget: string;
-    weeklyFocusNotes: string;
-    weeklySplitSchedule: WeeklySplitDay[];
-  }>({
-    weeklyWorkoutsTarget: "",
-    weeklyWalkMinutesTarget: "",
-    weeklyCalorieDeficitTarget: "",
-    weeklyFocusNotes: "",
-    weeklySplitSchedule: [],
-  });
-
-  // Form state for monthly mesocycle
-  const [monthlyForm, setMonthlyForm] = useState<{
-    monthlyMesocycleName: string;
-    monthlyPrimaryGoal: string;
-    monthlyWeightLossTargetKg: string;
-    monthlyTotalWorkoutsTarget: string;
-    monthlyFocusNotes: string;
-    monthlyPhases: MonthlyPhase[];
-  }>({
-    monthlyMesocycleName: "",
-    monthlyPrimaryGoal: "",
-    monthlyWeightLossTargetKg: "",
-    monthlyTotalWorkoutsTarget: "",
-    monthlyFocusNotes: "",
-    monthlyPhases: [],
-  });
-
-  // Form state for goal configuration (starts completely empty by default)
+  // Form state for editing targets (starts blank by default)
   const [form, setForm] = useState<{
     caloriesTarget: string;
     caloriesNotes: string;
@@ -113,64 +77,28 @@ export function GoalsDashboard() {
     trainingNotes: "",
   });
 
-  // Custom quick-add inputs
-  const [customCalorieInput, setCustomCalorieInput] = useState("");
-  const [customProteinInput, setCustomProteinInput] = useState("");
-
   const refreshGoals = () => {
-    getDailyGoalsAction().then((data) => {
-      setGoals(data);
-      // Sync form if goals exist
-      setForm({
-        caloriesTarget: data.caloriesTarget !== null ? String(data.caloriesTarget) : "",
-        caloriesNotes: data.caloriesNotes ?? "",
-        proteinMinGrams: data.proteinMinGrams !== null ? String(data.proteinMinGrams) : "",
-        proteinMaxGrams: data.proteinMaxGrams !== null ? String(data.proteinMaxGrams) : "",
-        proteinNotes: data.proteinNotes ?? "",
-        waterMinLiters: data.waterMinLiters !== null ? String(data.waterMinLiters) : "",
-        waterMaxLiters: data.waterMaxLiters !== null ? String(data.waterMaxLiters) : "",
-        waterNotes: data.waterNotes ?? "",
-        dailyWalkMinMinutes: data.dailyWalkMinMinutes !== null ? String(data.dailyWalkMinMinutes) : "",
-        dailyWalkMaxMinutes: data.dailyWalkMaxMinutes !== null ? String(data.dailyWalkMaxMinutes) : "",
-        dailyWalkNotes: data.dailyWalkNotes ?? "",
-        trainingDaysPerWeek: data.trainingDaysPerWeek !== null ? String(data.trainingDaysPerWeek) : "",
-        trainingNotes: data.trainingNotes ?? "",
-      });
-
-      // Sync weekly plan form
-      setWeeklyForm({
-        weeklyWorkoutsTarget: data.weeklyWorkoutsTarget !== null ? String(data.weeklyWorkoutsTarget) : "",
-        weeklyWalkMinutesTarget: data.weeklyWalkMinutesTarget !== null ? String(data.weeklyWalkMinutesTarget) : "",
-        weeklyCalorieDeficitTarget: data.weeklyCalorieDeficitTarget !== null ? String(data.weeklyCalorieDeficitTarget) : "",
-        weeklyFocusNotes: data.weeklyFocusNotes ?? "",
-        weeklySplitSchedule: data.weeklySplitSchedule || [],
-      });
-
-      // Sync monthly plan form
-      setMonthlyForm({
-        monthlyMesocycleName: data.monthlyMesocycleName ?? "",
-        monthlyPrimaryGoal: data.monthlyPrimaryGoal ?? "",
-        monthlyWeightLossTargetKg: data.monthlyWeightLossTargetKg !== null ? String(data.monthlyWeightLossTargetKg) : "",
-        monthlyTotalWorkoutsTarget: data.monthlyTotalWorkoutsTarget !== null ? String(data.monthlyTotalWorkoutsTarget) : "",
-        monthlyFocusNotes: data.monthlyFocusNotes ?? "",
-        monthlyPhases: data.monthlyPhases || [],
-      });
+    startTransition(async () => {
+      try {
+        const data = await getDailyGoalsAction();
+        setGoals(data);
+      } catch (err) {
+        console.error("Failed to fetch goals:", err);
+      }
     });
   };
 
   useEffect(() => {
     refreshGoals();
 
-    // Auto-refresh whenever user switches back to this browser tab (e.g. after Gemini calls MCP)
-    const onFocus = () => {
-      refreshGoals();
-    };
+    const onFocus = () => refreshGoals();
     window.addEventListener("focus", onFocus);
 
-    // Periodic poll every 5 seconds when visible to keep in sync with background AI mutations
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        refreshGoals();
+        getDailyGoalsAction()
+          .then((data) => setGoals(data))
+          .catch(() => {});
       }
     }, 5000);
 
@@ -180,1869 +108,990 @@ export function GoalsDashboard() {
     };
   }, []);
 
-  const handleSaveGoals = (e: React.FormEvent) => {
+  const openConfigModal = () => {
+    if (goals) {
+      setForm({
+        caloriesTarget: goals.caloriesTarget?.toString() || "",
+        caloriesNotes: goals.caloriesNotes || "",
+        proteinMinGrams: goals.proteinMinGrams?.toString() || "",
+        proteinMaxGrams: goals.proteinMaxGrams?.toString() || "",
+        proteinNotes: goals.proteinNotes || "",
+        waterMinLiters: goals.waterMinLiters?.toString() || "",
+        waterMaxLiters: goals.waterMaxLiters?.toString() || "",
+        waterNotes: goals.waterNotes || "",
+        dailyWalkMinMinutes: goals.dailyWalkMinMinutes?.toString() || "",
+        dailyWalkMaxMinutes: goals.dailyWalkMaxMinutes?.toString() || "",
+        dailyWalkNotes: goals.dailyWalkNotes || "",
+        trainingDaysPerWeek: goals.trainingDaysPerWeek?.toString() || "",
+        trainingNotes: goals.trainingNotes || "",
+      });
+    }
+    setIsConfigOpen(true);
+  };
+
+  const handleSaveTargets = (e: React.FormEvent) => {
     e.preventDefault();
     startTransition(async () => {
-      const payload: SaveDailyGoalsInput = {
-        caloriesTarget: form.caloriesTarget ? Number(form.caloriesTarget) : null,
-        caloriesNotes: form.caloriesNotes || null,
-        proteinMinGrams: form.proteinMinGrams ? Number(form.proteinMinGrams) : null,
-        proteinMaxGrams: form.proteinMaxGrams ? Number(form.proteinMaxGrams) : null,
-        proteinNotes: form.proteinNotes || null,
-        waterMinLiters: form.waterMinLiters ? Number(form.waterMinLiters) : null,
-        waterMaxLiters: form.waterMaxLiters ? Number(form.waterMaxLiters) : null,
-        waterNotes: form.waterNotes || null,
-        dailyWalkMinMinutes: form.dailyWalkMinMinutes ? Number(form.dailyWalkMinMinutes) : null,
-        dailyWalkMaxMinutes: form.dailyWalkMaxMinutes ? Number(form.dailyWalkMaxMinutes) : null,
-        dailyWalkNotes: form.dailyWalkNotes || null,
-        trainingDaysPerWeek: form.trainingDaysPerWeek ? Number(form.trainingDaysPerWeek) : null,
-        trainingNotes: form.trainingNotes || null,
-      };
-
-      const res = await saveDailyGoalsAction(payload);
-      if (res.success) {
-        setGoals(res.goals);
-        setIsConfigOpen(false);
-        setStatusMessage("✅ Daily goals saved successfully!");
-        setTimeout(() => setStatusMessage(null), 3000);
+      try {
+        const input: SaveDailyGoalsInput = {
+          caloriesTarget: form.caloriesTarget ? Number(form.caloriesTarget) : null,
+          caloriesNotes: form.caloriesNotes || null,
+          proteinMinGrams: form.proteinMinGrams ? Number(form.proteinMinGrams) : null,
+          proteinMaxGrams: form.proteinMaxGrams ? Number(form.proteinMaxGrams) : null,
+          proteinNotes: form.proteinNotes || null,
+          waterMinLiters: form.waterMinLiters ? Number(form.waterMinLiters) : null,
+          waterMaxLiters: form.waterMaxLiters ? Number(form.waterMaxLiters) : null,
+          waterNotes: form.waterNotes || null,
+          dailyWalkMinMinutes: form.dailyWalkMinMinutes ? Number(form.dailyWalkMinMinutes) : null,
+          dailyWalkMaxMinutes: form.dailyWalkMaxMinutes ? Number(form.dailyWalkMaxMinutes) : null,
+          dailyWalkNotes: form.dailyWalkNotes || null,
+          trainingDaysPerWeek: form.trainingDaysPerWeek ? Number(form.trainingDaysPerWeek) : null,
+          trainingNotes: form.trainingNotes || null,
+        };
+        const res = await saveDailyGoalsAction(input);
+        if (res.success) {
+          setGoals(res.goals);
+          setIsConfigOpen(false);
+          setStatusMessage({ text: "Targets updated successfully!", type: "success" });
+          setTimeout(() => setStatusMessage(null), 3500);
+        }
+      } catch {
+        setStatusMessage({ text: "Failed to save targets.", type: "error" });
       }
     });
   };
 
-  const handleSaveWeeklyPlan = (e: React.FormEvent) => {
-    e.preventDefault();
-    startTransition(async () => {
-      const payload: SaveDailyGoalsInput = {
-        weeklyWorkoutsTarget: weeklyForm.weeklyWorkoutsTarget ? Number(weeklyForm.weeklyWorkoutsTarget) : null,
-        weeklyWalkMinutesTarget: weeklyForm.weeklyWalkMinutesTarget ? Number(weeklyForm.weeklyWalkMinutesTarget) : null,
-        weeklyCalorieDeficitTarget: weeklyForm.weeklyCalorieDeficitTarget ? Number(weeklyForm.weeklyCalorieDeficitTarget) : null,
-        weeklyFocusNotes: weeklyForm.weeklyFocusNotes || null,
-        weeklySplitSchedule: weeklyForm.weeklySplitSchedule.length > 0 ? weeklyForm.weeklySplitSchedule : null,
-      };
+  const handleLogNatural = (textToLog?: string) => {
+    const text = (textToLog || naturalInput).trim();
+    if (!text) return;
 
-      const res = await saveDailyGoalsAction(payload);
-      if (res.success) {
-        setGoals(res.goals);
-        setIsWeeklyConfigOpen(false);
-        setStatusMessage("✅ Weekly training plan saved!");
-        setTimeout(() => setStatusMessage(null), 3000);
+    startTransition(async () => {
+      try {
+        const res = await logNaturalEntryAction({ text });
+        if (res.success) {
+          setGoals(res.goals);
+          setNaturalInput("");
+          setStatusMessage({ text: res.message, type: "success" });
+          setTimeout(() => setStatusMessage(null), 4000);
+        } else {
+          setStatusMessage({ text: res.message, type: "error" });
+          setTimeout(() => setStatusMessage(null), 5000);
+        }
+      } catch {
+        setStatusMessage({ text: "Failed to log entry.", type: "error" });
       }
     });
   };
 
-  const handleLoadRecommendedWeekly = async () => {
-    const rec = await getRecommendedWeeklyPlanAction();
-    setWeeklyForm({
-      weeklyWorkoutsTarget: String(rec.weeklyWorkoutsTarget),
-      weeklyWalkMinutesTarget: String(rec.weeklyWalkMinutesTarget),
-      weeklyCalorieDeficitTarget: String(rec.weeklyCalorieDeficitTarget),
-      weeklyFocusNotes: rec.weeklyFocusNotes,
-      weeklySplitSchedule: rec.weeklySplitSchedule,
-    });
-  };
-
-  const handleSaveMonthlyPlan = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleDeleteItem = (itemId: string) => {
     startTransition(async () => {
-      const payload: SaveDailyGoalsInput = {
-        monthlyMesocycleName: monthlyForm.monthlyMesocycleName || null,
-        monthlyPrimaryGoal: monthlyForm.monthlyPrimaryGoal || null,
-        monthlyWeightLossTargetKg: monthlyForm.monthlyWeightLossTargetKg ? Number(monthlyForm.monthlyWeightLossTargetKg) : null,
-        monthlyTotalWorkoutsTarget: monthlyForm.monthlyTotalWorkoutsTarget ? Number(monthlyForm.monthlyTotalWorkoutsTarget) : null,
-        monthlyFocusNotes: monthlyForm.monthlyFocusNotes || null,
-        monthlyPhases: monthlyForm.monthlyPhases.length > 0 ? monthlyForm.monthlyPhases : null,
-      };
-
-      const res = await saveDailyGoalsAction(payload);
-      if (res.success) {
-        setGoals(res.goals);
-        setIsMonthlyConfigOpen(false);
-        setStatusMessage("✅ Monthly mesocycle roadmap saved!");
-        setTimeout(() => setStatusMessage(null), 3000);
-      }
-    });
-  };
-
-  const handleLoadRecommendedMonthly = async () => {
-    const rec = await getRecommendedMonthlyPlanAction();
-    setMonthlyForm({
-      monthlyMesocycleName: rec.monthlyMesocycleName,
-      monthlyPrimaryGoal: rec.monthlyPrimaryGoal,
-      monthlyWeightLossTargetKg: String(rec.monthlyWeightLossTargetKg),
-      monthlyTotalWorkoutsTarget: String(rec.monthlyTotalWorkoutsTarget),
-      monthlyFocusNotes: rec.monthlyFocusNotes,
-      monthlyPhases: rec.monthlyPhases,
-    });
-  };
-
-  const handleQuickLog = (
-    metric: "calories" | "protein" | "water" | "walk" | "training",
-    value: number | boolean,
-    mode: "add" | "set" = "add"
-  ) => {
-    startTransition(async () => {
-      const res = await logDailyMetricAction({ metric, value, mode });
-      if (res.success) {
-        setGoals(res.goals);
+      try {
+        const res = await deleteLoggedItemAction(itemId);
+        if (res.success) {
+          setGoals(res.goals);
+          setStatusMessage({ text: "Item removed and totals updated.", type: "success" });
+          setTimeout(() => setStatusMessage(null), 3000);
+        }
+      } catch {
+        setStatusMessage({ text: "Failed to delete item.", type: "error" });
       }
     });
   };
 
   const handleResetToday = () => {
-    if (confirm("Reset today's tracking numbers to zero? Your configured targets will not be changed.")) {
-      startTransition(async () => {
+    if (!window.confirm("Reset today's logged intake and activities to zero? Your targets will be preserved.")) return;
+    startTransition(async () => {
+      try {
         const res = await resetDailyTrackingAction();
         if (res.success) {
           setGoals(res.goals);
-          setStatusMessage("🔄 Today's intake numbers reset to zero.");
-          setTimeout(() => setStatusMessage(null), 3000);
+          setStatusMessage({ text: "Today's tracking has been reset to 0.", type: "success" });
+          setTimeout(() => setStatusMessage(null), 3500);
         }
-      });
-    }
+      } catch {
+        setStatusMessage({ text: "Failed to reset today's tracking.", type: "error" });
+      }
+    });
   };
 
-  const handleClearAllGoals = () => {
-    if (confirm("Clear all targets and reset back to completely empty?")) {
-      startTransition(async () => {
+  const handleClearAll = () => {
+    if (!window.confirm("Clear all targets and logged data back to a completely blank unconfigured state?")) return;
+    startTransition(async () => {
+      try {
         const res = await clearAllGoalsAction();
         if (res.success) {
           setGoals(res.goals);
-          setForm({
-            caloriesTarget: "",
-            caloriesNotes: "",
-            proteinMinGrams: "",
-            proteinMaxGrams: "",
-            proteinNotes: "",
-            waterMinLiters: "",
-            waterMaxLiters: "",
-            waterNotes: "",
-            dailyWalkMinMinutes: "",
-            dailyWalkMaxMinutes: "",
-            dailyWalkNotes: "",
-            trainingDaysPerWeek: "",
-            trainingNotes: "",
-          });
           setIsConfigOpen(false);
-          setStatusMessage("🗑️ All goals cleared.");
-          setTimeout(() => setStatusMessage(null), 3000);
+          setStatusMessage({ text: "All targets cleared.", type: "success" });
+          setTimeout(() => setStatusMessage(null), 3500);
         }
-      });
-    }
+      } catch {
+        setStatusMessage({ text: "Failed to clear targets.", type: "error" });
+      }
+    });
   };
 
-  const hasAnyTargetSet = Boolean(
-    goals?.caloriesTarget ||
-      goals?.proteinMinGrams ||
-      goals?.proteinMaxGrams ||
-      goals?.waterMinLiters ||
-      goals?.waterMaxLiters ||
-      goals?.dailyWalkMinMinutes ||
-      goals?.dailyWalkMaxMinutes ||
-      goals?.trainingDaysPerWeek
-  );
+  const handleLoadRecommendedTargets = () => {
+    setForm({
+      caloriesTarget: "1900",
+      caloriesNotes: "Steady fat-loss deficit (~450 kcal below TDEE) preserving muscle mass",
+      proteinMinGrams: "60",
+      proteinMaxGrams: "75",
+      proteinNotes: "High protein: 4 eggs morning, chicken breast dinner, lentils/family staples",
+      waterMinLiters: "3.0",
+      waterMaxLiters: "3.5",
+      waterNotes: "Daily hydration for recovery, cellular volume, and joints",
+      dailyWalkMinMinutes: "20",
+      dailyWalkMaxMinutes: "30",
+      dailyWalkNotes: "Brisk outdoor walking to keep NEAT and metabolic rate active",
+      trainingDaysPerWeek: "5",
+      trainingNotes: "5 days/week double progression. Stop all sets strictly at technical failure.",
+    });
+  };
 
-  const hasWeeklyTargetSet = Boolean(
-    goals?.weeklyWorkoutsTarget ||
-      goals?.weeklyWalkMinutesTarget ||
-      goals?.weeklyCalorieDeficitTarget ||
-      goals?.weeklyFocusNotes ||
-      (goals?.weeklySplitSchedule && goals.weeklySplitSchedule.length > 0)
-  );
+  const handleLoadWeeklyTemplate = () => {
+    startTransition(async () => {
+      const template = await getRecommendedWeeklyPlanAction();
+      const res = await saveDailyGoalsAction({
+        weeklyWorkoutsTarget: template.weeklyWorkoutsTarget,
+        weeklyWalkMinutesTarget: template.weeklyWalkMinutesTarget,
+        weeklyCalorieDeficitTarget: template.weeklyCalorieDeficitTarget,
+        weeklyFocusNotes: template.weeklyFocusNotes,
+        weeklySplitSchedule: template.weeklySplitSchedule,
+      });
+      if (res.success) {
+        setGoals(res.goals);
+        setStatusMessage({ text: "Loaded recommended 5-day split schedule!", type: "success" });
+        setTimeout(() => setStatusMessage(null), 3500);
+      }
+    });
+  };
 
-  const hasMonthlyTargetSet = Boolean(
-    goals?.monthlyMesocycleName ||
-      goals?.monthlyPrimaryGoal ||
-      goals?.monthlyWeightLossTargetKg ||
-      goals?.monthlyTotalWorkoutsTarget ||
-      goals?.monthlyFocusNotes ||
-      (goals?.monthlyPhases && goals.monthlyPhases.length > 0)
-  );
+  const handleLoadMonthlyTemplate = () => {
+    startTransition(async () => {
+      const template = await getRecommendedMonthlyPlanAction();
+      const res = await saveDailyGoalsAction({
+        monthlyMesocycleName: template.monthlyMesocycleName,
+        monthlyPrimaryGoal: template.monthlyPrimaryGoal,
+        monthlyWeightLossTargetKg: template.monthlyWeightLossTargetKg,
+        monthlyTotalWorkoutsTarget: template.monthlyTotalWorkoutsTarget,
+        monthlyFocusNotes: template.monthlyFocusNotes,
+        monthlyPhases: template.monthlyPhases,
+      });
+      if (res.success) {
+        setGoals(res.goals);
+        setStatusMessage({ text: "Loaded recommended 4-week overload mesocycle!", type: "success" });
+        setTimeout(() => setStatusMessage(null), 3500);
+      }
+    });
+  };
 
-  // Adherence calculation
-  const totalConfiguredCategories = [
-    Boolean(goals?.caloriesTarget),
-    Boolean(goals?.proteinMinGrams || goals?.proteinMaxGrams),
-    Boolean(goals?.waterMinLiters || goals?.waterMaxLiters),
-    Boolean(goals?.dailyWalkMinMinutes || goals?.dailyWalkMaxMinutes),
-    Boolean(goals?.trainingDaysPerWeek),
-  ].filter(Boolean).length;
+  // Safe percentage helper
+  const calcPct = (curr: number, target: number | null | undefined) => {
+    if (!target || target <= 0) return 0;
+    return Math.min(100, Math.round((curr / target) * 100));
+  };
 
-  let categoriesCompletedToday = 0;
-  if (goals?.caloriesTarget && goals.todayCalories >= goals.caloriesTarget) categoriesCompletedToday++;
-  if (goals?.proteinMinGrams && goals.todayProtein >= goals.proteinMinGrams) categoriesCompletedToday++;
-  if (goals?.waterMinLiters && goals.todayWaterLiters >= goals.waterMinLiters) categoriesCompletedToday++;
-  if (goals?.dailyWalkMinMinutes && goals.todayWalkMinutes >= goals.dailyWalkMinMinutes) categoriesCompletedToday++;
-  if (goals?.trainingDaysPerWeek && goals.todayTrainingCompleted) categoriesCompletedToday++;
-
-  const todayScorePercent =
-    totalConfiguredCategories > 0
-      ? Math.round((categoriesCompletedToday / totalConfiguredCategories) * 100)
-      : 0;
-
-  const todayDateStr = new Date().toLocaleDateString(undefined, {
+  const dateString = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "short",
     day: "numeric",
   });
 
+  const todayCalories = goals?.todayCalories ?? 0;
+  const targetCalories = goals?.caloriesTarget;
+  const calPct = calcPct(todayCalories, targetCalories);
+
+  const todayProtein = goals?.todayProtein ?? 0;
+  const targetProteinMin = goals?.proteinMinGrams;
+  const targetProteinMax = goals?.proteinMaxGrams;
+  const proPct = calcPct(todayProtein, targetProteinMax || targetProteinMin || null);
+
+  const todayWater = goals?.todayWaterLiters ?? 0;
+  const targetWaterMin = goals?.waterMinLiters;
+  const targetWaterMax = goals?.waterMaxLiters;
+  const waterPct = calcPct(todayWater, targetWaterMax || targetWaterMin || null);
+
+  const todayWalk = goals?.todayWalkMinutes ?? 0;
+  const targetWalkMin = goals?.dailyWalkMinMinutes;
+  const targetWalkMax = goals?.dailyWalkMaxMinutes;
+  const walkPct = calcPct(todayWalk, targetWalkMax || targetWalkMin || null);
+
+  const isTrainingDone = Boolean(goals?.todayTrainingCompleted);
+  const loggedItems: LoggedItem[] = goals?.todayLoggedItems || [];
+
   return (
-    <div className="w-full max-w-6xl mx-auto flex flex-col gap-6 text-zinc-100 select-none pb-20">
-      {/* Top Header Bar */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
-        <div className="flex items-center gap-3">
-          <div
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center ${
-              periodTab === "daily"
-                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                : periodTab === "weekly"
-                ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-400"
-                : "bg-purple-500/10 border-purple-500/20 text-purple-400"
-            }`}
+    <div className="w-full max-w-6xl mx-auto space-y-6 pb-20">
+      {/* Top Notification Toast */}
+      {statusMessage && (
+        <div
+          className={`p-3.5 rounded-xl border text-sm font-medium flex items-center justify-between shadow-lg transition-all animate-in fade-in slide-in-from-top-2 ${
+            statusMessage.type === "success"
+              ? "bg-emerald-950/80 border-emerald-500/50 text-emerald-200"
+              : "bg-red-950/80 border-red-500/50 text-red-200"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {statusMessage.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <X className="w-4 h-4 text-red-400 shrink-0" />
+            )}
+            <span>{statusMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setStatusMessage(null)}
+            className="text-zinc-400 hover:text-white ml-3 text-xs uppercase"
           >
-            {periodTab === "daily" && <Target className="w-5 h-5" />}
-            {periodTab === "weekly" && <CalendarDays className="w-5 h-5" />}
-            {periodTab === "monthly" && <Layers className="w-5 h-5" />}
+            Close
+          </button>
+        </div>
+      )}
+
+      {/* Modern Header */}
+      <header className="bg-zinc-900/90 backdrop-blur border border-zinc-800 rounded-2xl p-5 md:p-6 shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+              <Target className="w-6 h-6 text-emerald-400" />
+              GOALS & HABITS
+            </h1>
+            <span className="text-[10px] font-mono tracking-widest px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+              AUTOREGULATED
+            </span>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black font-mono uppercase tracking-wider text-zinc-100">
-                {periodTab === "daily" && "Daily Goals & Habits"}
-                {periodTab === "weekly" && "Weekly Training & Deficit Plan"}
-                {periodTab === "monthly" && "Monthly Progressive Overload Mesocycle"}
-              </h1>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                AUTOREGULATED
-              </span>
-            </div>
-            <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              {periodTab === "daily" && (
-                <>Today: <span className="text-zinc-200">{todayDateStr}</span> • Non-negotiable daily adherence</>
-              )}
-              {periodTab === "weekly" && "7-Day Split Schedule, target workout volume & active walk goals"}
-              {periodTab === "monthly" && "4-Week progressive overload block roadmap, deload phase & body recomp"}
-            </p>
-          </div>
+          <p className="text-xs md:text-sm text-zinc-400 font-mono">
+            {dateString} • Daily nutrition, habits & training
+          </p>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2.5">
           <button
-            type="button"
             onClick={refreshGoals}
-            className="text-xs font-mono px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border border-zinc-700 flex items-center gap-1.5 transition cursor-pointer"
-            title="Refresh latest goals and tracking from server"
+            disabled={isPending}
+            className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white border border-zinc-700/60 text-xs font-mono flex items-center gap-1.5 transition-colors"
+            title="Refresh latest data"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Refresh</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isPending ? "animate-spin text-emerald-400" : ""}`} />
+            Refresh
           </button>
-
-          {periodTab === "daily" && hasAnyTargetSet && (
-            <button
-              type="button"
-              onClick={handleResetToday}
-              disabled={isPending}
-              className="text-xs font-mono px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border border-zinc-700 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-              title="Reset today's tracking intake to 0 without changing your goals"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Reset Today</span>
-            </button>
-          )}
-
-          {periodTab === "daily" && (
-            <button
-              type="button"
-              onClick={() => setIsConfigOpen(true)}
-              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-emerald-500/20"
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              <span>{hasAnyTargetSet ? "Edit Goals" : "Configure Goals"}</span>
-            </button>
-          )}
-
-          {periodTab === "weekly" && (
-            <button
-              type="button"
-              onClick={() => setIsWeeklyConfigOpen(true)}
-              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-indigo-500/20"
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              <span>{hasWeeklyTargetSet ? "Edit Weekly Split" : "Configure Weekly Split"}</span>
-            </button>
-          )}
-
-          {periodTab === "monthly" && (
-            <button
-              type="button"
-              onClick={() => setIsMonthlyConfigOpen(true)}
-              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-purple-500/20"
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              <span>{hasMonthlyTargetSet ? "Edit Mesocycle" : "Configure Mesocycle"}</span>
-            </button>
-          )}
+          <button
+            onClick={handleResetToday}
+            disabled={isPending}
+            className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 hover:text-white border border-zinc-700/60 text-xs font-mono flex items-center gap-1.5 transition-colors"
+            title="Reset today's numbers to zero"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+            Reset Today
+          </button>
+          <button
+            onClick={openConfigModal}
+            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold font-mono flex items-center gap-2 transition-all shadow-md shadow-emerald-600/20"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            Set Targets
+          </button>
         </div>
       </header>
 
-      {/* Period Navigation Tabs: Daily Habits, Weekly Plan, Monthly Mesocycle */}
-      <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 self-start w-full sm:w-auto overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setPeriodTab("daily")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
-            periodTab === "daily"
-              ? "bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-          }`}
-        >
-          <Target className="w-3.5 h-3.5" />
-          <span>Daily Habits</span>
-        </button>
+      {/* HERO SECTION: Natural Language Meal & Habit Logger */}
+      <section className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-850 border-2 border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
-        <button
-          type="button"
-          onClick={() => setPeriodTab("weekly")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
-            periodTab === "weekly"
-              ? "bg-indigo-500 text-zinc-950 shadow-md shadow-indigo-500/20"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-          }`}
-        >
-          <CalendarDays className="w-3.5 h-3.5" />
-          <span>Weekly Plan</span>
-          {goals?.weeklyWorkoutsTarget && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-950/40 font-black">
-              {goals.weeklyWorkoutsTarget}D
+        <div className="relative z-10 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <label htmlFor="natural-input" className="text-sm md:text-base font-bold text-white flex items-center gap-2">
+              <span className="text-lg">🍳</span>
+              What did you eat or do today?
+            </label>
+            <span className="text-xs text-zinc-400 font-mono">
+              AI estimates calories & protein automatically
             </span>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setPeriodTab("monthly")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
-            periodTab === "monthly"
-              ? "bg-purple-500 text-zinc-950 shadow-md shadow-purple-500/20"
-              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" />
-          <span>Monthly Mesocycle</span>
-          {goals?.monthlyMesocycleName && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-950/40 font-black">
-              4-WK
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Notification toast */}
-      {statusMessage && (
-        <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 font-mono text-xs flex items-center gap-2 animate-in fade-in">
-          <Info className="w-4 h-4 text-emerald-400" />
-          <span>{statusMessage}</span>
-        </div>
-      )}
-
-      {/* PERIOD TAB 1: DAILY HABITS */}
-      {periodTab === "daily" && (
-        <>
-          {/* Empty State Banner if no goals are configured yet */}
-          {!hasAnyTargetSet && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-            <Target className="w-7 h-7" />
           </div>
-          <div className="max-w-md">
-            <h2 className="text-base sm:text-lg font-black font-mono text-zinc-100 uppercase tracking-wide">
-              No Goals Configured Yet
-            </h2>
-            <p className="text-xs text-zinc-400 font-mono mt-1.5 leading-relaxed">
-              Your dashboard starts completely clean. Click below to enter your exact targets for Calories,
-              Protein, Water, Daily Walk, and Training Adherence.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsConfigOpen(true)}
-            className="text-xs font-mono font-bold px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-500/20"
+
+          {/* Large Clean Natural Input Bar */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleLogNatural();
+            }}
+            className="flex items-center gap-2"
           >
-            <Plus className="w-4 h-4" />
-            <span>Set My Daily Goals</span>
-          </button>
-        </div>
-      )}
+            <div className="relative flex-1">
+              <input
+                id="natural-input"
+                type="text"
+                value={naturalInput}
+                onChange={(e) => setNaturalInput(e.target.value)}
+                placeholder='e.g. "4 boiled eggs", "chicken breast with rice", "drank 500ml water", "walked 25 mins"...'
+                disabled={isPending}
+                className="w-full bg-black/60 border border-zinc-700/80 rounded-xl px-4 py-3.5 text-sm md:text-base text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-sans"
+              />
+              {naturalInput && (
+                <button
+                  type="button"
+                  onClick={() => setNaturalInput("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <button
+              type="submit"
+              disabled={isPending || !naturalInput.trim()}
+              className="px-5 py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 text-black font-black text-sm rounded-xl flex items-center gap-2 transition-all shrink-0 font-mono shadow-lg shadow-emerald-500/20"
+            >
+              <Send className="w-4 h-4" />
+              <span>LOG</span>
+            </button>
+          </form>
 
-      {/* Adherence Score Ribbon (Only shown if goals are configured) */}
-      {hasAnyTargetSet && (
-        <div className="p-4 rounded-2xl bg-zinc-900/70 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Instant Quick-Pill Suggestions */}
+          <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-1 scrollbar-none text-xs">
+            <span className="text-zinc-500 font-mono uppercase tracking-wider text-[11px] shrink-0">
+              Quick tap:
+            </span>
+            {[
+              { label: "🍳 4 Eggs", query: "4 eggs" },
+              { label: "🥩 Chicken Breast (200g)", query: "chicken breast 200g" },
+              { label: "🥤 Whey Shake", query: "1 scoop of whey protein" },
+              { label: "🍚 Bowl of Rice", query: "1 bowl of white rice" },
+              { label: "💧 500ml Water", query: "500ml water" },
+              { label: "👟 25m Walk", query: "walked 25 minutes" },
+              { label: "🏋️ Workout Done", query: "completed workout" },
+            ].map((pill) => (
+              <button
+                key={pill.label}
+                type="button"
+                onClick={() => handleLogNatural(pill.query)}
+                disabled={isPending}
+                className="px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-750 text-zinc-300 hover:text-white border border-zinc-700/60 whitespace-nowrap transition-colors text-xs font-medium shrink-0"
+              >
+                {pill.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* TODAY'S METRICS: Clean High-Signal Cards */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-mono uppercase tracking-wider text-zinc-400 font-bold flex items-center gap-2">
+            <span>📊</span> Today&apos;s Nutrition &amp; Habits
+          </h2>
+          {targetCalories ? (
+            <span className="text-xs text-zinc-400 font-mono">
+              Target: {targetCalories.toLocaleString()} kcal
+            </span>
+          ) : (
+            <button
+              onClick={openConfigModal}
+              className="text-xs text-emerald-400 hover:underline font-mono"
+            >
+              + Set targets
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Calories */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 relative overflow-hidden group hover:border-amber-500/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Flame className="w-4 h-4 text-amber-400" />
+                Calories
+              </span>
+              <span className="text-xs font-mono text-zinc-400 font-semibold">
+                {calPct}%
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-black text-white font-mono">
+                  {todayCalories.toLocaleString()}
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  / {targetCalories ? `${targetCalories.toLocaleString()} kcal` : "no target"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 line-clamp-1">
+                {goals?.caloriesNotes || (targetCalories ? "Deficit target" : "Click 'Set Targets' to set goal")}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 to-orange-400 rounded-full transition-all duration-500"
+                style={{ width: `${calPct}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Card 2: Protein */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 relative overflow-hidden group hover:border-emerald-500/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Beef className="w-4 h-4 text-emerald-400" />
+                Protein
+              </span>
+              <span className="text-xs font-mono text-zinc-400 font-semibold">
+                {proPct}%
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-black text-white font-mono">
+                  {todayProtein}g
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  / {targetProteinMin ? `${targetProteinMin}${targetProteinMax ? `-${targetProteinMax}` : ""}g` : "no target"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 line-clamp-1">
+                {goals?.proteinNotes || (targetProteinMin ? "Muscle preservation" : "e.g. 4 eggs + chicken")}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+                style={{ width: `${proPct}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Card 3: Water */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 relative overflow-hidden group hover:border-cyan-500/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Droplets className="w-4 h-4 text-cyan-400" />
+                Hydration
+              </span>
+              <span className="text-xs font-mono text-zinc-400 font-semibold">
+                {waterPct}%
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-black text-white font-mono">
+                  {todayWater}L
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  / {targetWaterMin ? `${targetWaterMin}${targetWaterMax ? `-${targetWaterMax}` : ""}L` : "no target"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 line-clamp-1">
+                {goals?.waterNotes || (targetWaterMin ? "Cellular hydration" : "e.g. 3.0 to 3.5 Liters")}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-400 rounded-full transition-all duration-500"
+                style={{ width: `${waterPct}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Card 4: Daily Walk */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3 relative overflow-hidden group hover:border-purple-500/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Footprints className="w-4 h-4 text-purple-400" />
+                Daily Walk
+              </span>
+              <span className="text-xs font-mono text-zinc-400 font-semibold">
+                {walkPct}%
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-3xl font-black text-white font-mono">
+                  {todayWalk}m
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  / {targetWalkMin ? `${targetWalkMin}${targetWalkMax ? `-${targetWalkMax}` : ""}m` : "no target"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-400 line-clamp-1">
+                {goals?.dailyWalkNotes || (targetWalkMin ? "NEAT & active metabolic rate" : "e.g. 20 to 30 mins")}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-500 to-indigo-400 rounded-full transition-all duration-500"
+                style={{ width: `${walkPct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Training Adherence Card */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-zinc-950 border border-zinc-800 font-mono font-black text-emerald-400 text-lg">
-              {todayScorePercent}%
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${
+                isTrainingDone
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                  : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+              }`}
+            >
+              <Dumbbell className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs font-bold font-mono text-zinc-200">
-                Today&apos;s Goal Adherence
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-white">
+                  Today&apos;s Training Session
+                </span>
+                {isTrainingDone ? (
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                    <Check className="w-3 h-3" /> COMPLETED
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-mono font-bold">
+                    PENDING
+                  </span>
+                )}
               </div>
-              <div className="text-[11px] text-zinc-400 font-mono">
-                {categoriesCompletedToday} of {totalConfiguredCategories} configured targets reached today
-              </div>
+              <p className="text-xs text-zinc-400 font-mono mt-0.5">
+                {goals?.trainingDaysPerWeek ? `Target: ${goals.trainingDaysPerWeek} days/week` : "5 days/week target"}
+                {" • "}
+                {goals?.trainingNotes || "Stop sets strictly at technical breakdown"}
+              </p>
             </div>
           </div>
 
-          <div className="w-full sm:w-64 bg-zinc-950 h-3 rounded-full overflow-hidden border border-zinc-800">
-            <div
-              className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500 rounded-full"
-              style={{ width: `${Math.min(100, todayScorePercent)}%` }}
-            />
-          </div>
+          <button
+            onClick={() => handleLogNatural(isTrainingDone ? "reset workout" : "completed workout")}
+            disabled={isPending}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 self-start sm:self-auto ${
+              isTrainingDone
+                ? "bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border border-zinc-700"
+                : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20"
+            }`}
+          >
+            {isTrainingDone ? (
+              <>
+                <RotateCcw className="w-3.5 h-3.5" />
+                Undo Session
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                Mark Done Today
+              </>
+            )}
+          </button>
         </div>
-      )}
+      </section>
 
-      {/* 5 Category Goal Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {/* 1. CALORIES CARD */}
-        <section className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-orange-400">
-                <Flame className="w-5 h-5" />
-                <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                  Calories
-                </span>
-              </div>
-              {goals?.caloriesTarget ? (
-                <span className="text-xs font-mono font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded-md border border-orange-500/20">
-                  Target: {goals.caloriesTarget.toLocaleString()} kcal
-                </span>
-              ) : (
-                <span className="text-[11px] font-mono text-zinc-500">Not configured</span>
-              )}
-            </div>
-
-            {/* Strategic Notes */}
-            {goals?.caloriesNotes ? (
-              <p className="mt-2 text-xs text-zinc-400 font-mono bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
-                💡 {goals.caloriesNotes}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-zinc-600 font-mono italic">
-                No deficit or calorie strategy note entered.
-              </p>
-            )}
-
-            {/* Progress Display */}
-            <div className="mt-4">
-              <div className="flex justify-between items-baseline font-mono text-xs mb-1.5">
-                <span className="text-zinc-400">Today&apos;s Intake:</span>
-                <span className="font-bold text-zinc-100">
-                  <span className="text-orange-400 text-sm font-black">{goals?.todayCalories ?? 0}</span>
-                  {goals?.caloriesTarget ? ` / ${goals.caloriesTarget} kcal` : " kcal"}
-                </span>
-              </div>
-              <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                <div
-                  className="h-full bg-orange-500 transition-all duration-300"
-                  style={{
-                    width: `${
-                      goals?.caloriesTarget
-                        ? Math.min(100, Math.round(((goals.todayCalories ?? 0) / goals.caloriesTarget) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
+      {/* TODAY'S LOGGED MEALS & ACTIVITIES FEED */}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 md:p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
+              Today&apos;s Activity &amp; Meal History
+            </h3>
+            <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 text-xs font-mono font-bold">
+              {loggedItems.length}
+            </span>
           </div>
+          {loggedItems.length > 0 && (
+            <button
+              onClick={handleResetToday}
+              className="text-xs text-zinc-400 hover:text-amber-400 font-mono transition-colors"
+            >
+              Clear all items
+            </button>
+          )}
+        </div>
 
-          {/* Quick Intake Logger */}
-          <div className="mt-5 pt-3 border-t border-zinc-800/80">
-            <div className="flex items-center gap-1.5">
-              {[+100, +250, +500].map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => handleQuickLog("calories", amt, "add")}
-                  disabled={isPending}
-                  className="flex-1 py-1.5 text-xs font-mono rounded-lg bg-zinc-800 hover:bg-zinc-750 text-orange-300 border border-zinc-700/60 transition cursor-pointer disabled:opacity-50"
-                >
-                  +{amt}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <input
-                type="number"
-                placeholder="Custom kcal..."
-                value={customCalorieInput}
-                onChange={(e) => setCustomCalorieInput(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-orange-500"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const val = Number(customCalorieInput);
-                  if (val > 0) {
-                    handleQuickLog("calories", val, "add");
-                    setCustomCalorieInput("");
-                  }
-                }}
-                disabled={!customCalorieInput || isPending}
-                className="px-3 py-1 bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 border border-orange-500/40 rounded-lg text-xs font-mono font-bold transition cursor-pointer disabled:opacity-30"
+        {loggedItems.length === 0 ? (
+          <div className="p-8 text-center border border-dashed border-zinc-800 rounded-xl space-y-2">
+            <p className="text-sm text-zinc-400">
+              No meals or activities logged yet today.
+            </p>
+            <p className="text-xs text-zinc-500 font-mono">
+              Use the input box above (e.g. &quot;I ate 4 eggs&quot; or &quot;drank 500ml water&quot;) to log your intake automatically!
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {loggedItems.map((item) => (
+              <div
+                key={item.id}
+                className="bg-black/40 border border-zinc-800/80 hover:border-zinc-700 rounded-xl p-3.5 flex items-center justify-between gap-3 transition-colors"
               >
-                Add
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* 2. PROTEIN CARD */}
-        <section className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-rose-400">
-                <Beef className="w-5 h-5" />
-                <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                  Protein
-                </span>
-              </div>
-              {goals?.proteinMinGrams || goals?.proteinMaxGrams ? (
-                <span className="text-xs font-mono font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">
-                  {goals.proteinMinGrams && goals.proteinMaxGrams
-                    ? `${goals.proteinMinGrams}g - ${goals.proteinMaxGrams}g`
-                    : `${goals.proteinMinGrams ?? goals.proteinMaxGrams}g target`}
-                </span>
-              ) : (
-                <span className="text-[11px] font-mono text-zinc-500">Not configured</span>
-              )}
-            </div>
-
-            {/* Strategic Notes */}
-            {goals?.proteinNotes ? (
-              <p className="mt-2 text-xs text-zinc-400 font-mono bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
-                🥩 {goals.proteinNotes}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-zinc-600 font-mono italic">
-                No food staples or protein sources specified.
-              </p>
-            )}
-
-            {/* Progress Display */}
-            <div className="mt-4">
-              <div className="flex justify-between items-baseline font-mono text-xs mb-1.5">
-                <span className="text-zinc-400">Today&apos;s Intake:</span>
-                <span className="font-bold text-zinc-100">
-                  <span className="text-rose-400 text-sm font-black">{goals?.todayProtein ?? 0}g</span>
-                  {goals?.proteinMinGrams
-                    ? ` / ${goals.proteinMinGrams}${goals.proteinMaxGrams ? `-${goals.proteinMaxGrams}` : ""}g`
-                    : ""}
-                </span>
-              </div>
-              <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                <div
-                  className="h-full bg-rose-500 transition-all duration-300"
-                  style={{
-                    width: `${
-                      goals?.proteinMinGrams
-                        ? Math.min(100, Math.round(((goals.todayProtein ?? 0) / goals.proteinMinGrams) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Protein Logger */}
-          <div className="mt-5 pt-3 border-t border-zinc-800/80">
-            <div className="flex items-center gap-1.5">
-              {[+10, +25, +30].map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => handleQuickLog("protein", amt, "add")}
-                  disabled={isPending}
-                  className="flex-1 py-1.5 text-xs font-mono rounded-lg bg-zinc-800 hover:bg-zinc-750 text-rose-300 border border-zinc-700/60 transition cursor-pointer disabled:opacity-50"
-                >
-                  +{amt}g
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <input
-                type="number"
-                placeholder="Custom grams..."
-                value={customProteinInput}
-                onChange={(e) => setCustomProteinInput(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-rose-500"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const val = Number(customProteinInput);
-                  if (val > 0) {
-                    handleQuickLog("protein", val, "add");
-                    setCustomProteinInput("");
-                  }
-                }}
-                disabled={!customProteinInput || isPending}
-                className="px-3 py-1 bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 border border-rose-500/40 rounded-lg text-xs font-mono font-bold transition cursor-pointer disabled:opacity-30"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* 3. WATER INTAKE CARD */}
-        <section className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-cyan-400">
-                <Droplets className="w-5 h-5" />
-                <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                  Water Intake
-                </span>
-              </div>
-              {goals?.waterMinLiters || goals?.waterMaxLiters ? (
-                <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md border border-cyan-500/20">
-                  {goals.waterMinLiters && goals.waterMaxLiters
-                    ? `${goals.waterMinLiters}L - ${goals.waterMaxLiters}L`
-                    : `${goals.waterMinLiters ?? goals.waterMaxLiters}L target`}
-                </span>
-              ) : (
-                <span className="text-[11px] font-mono text-zinc-500">Not configured</span>
-              )}
-            </div>
-
-            {/* Strategic Notes */}
-            {goals?.waterNotes ? (
-              <p className="mt-2 text-xs text-zinc-400 font-mono bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
-                💧 {goals.waterNotes}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-zinc-600 font-mono italic">
-                No hydration reminder note specified.
-              </p>
-            )}
-
-            {/* Progress Display */}
-            <div className="mt-4">
-              <div className="flex justify-between items-baseline font-mono text-xs mb-1.5">
-                <span className="text-zinc-400">Today&apos;s Hydration:</span>
-                <span className="font-bold text-zinc-100">
-                  <span className="text-cyan-400 text-sm font-black">{goals?.todayWaterLiters ?? 0}L</span>
-                  {goals?.waterMinLiters
-                    ? ` / ${goals.waterMinLiters}${goals.waterMaxLiters ? `-${goals.waterMaxLiters}` : ""}L`
-                    : ""}
-                </span>
-              </div>
-              <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                <div
-                  className="h-full bg-cyan-500 transition-all duration-300"
-                  style={{
-                    width: `${
-                      goals?.waterMinLiters
-                        ? Math.min(100, Math.round(((goals.todayWaterLiters ?? 0) / goals.waterMinLiters) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Water Buttons */}
-          <div className="mt-5 pt-3 border-t border-zinc-800/80 flex items-center gap-2">
-            {[
-              { label: "+250ml", val: 0.25 },
-              { label: "+500ml", val: 0.5 },
-              { label: "+1.0L", val: 1.0 },
-            ].map((btn) => (
-              <button
-                key={btn.label}
-                type="button"
-                onClick={() => handleQuickLog("water", btn.val, "add")}
-                disabled={isPending}
-                className="flex-1 py-1.5 text-xs font-mono rounded-lg bg-zinc-800 hover:bg-zinc-750 text-cyan-300 border border-zinc-700/60 transition cursor-pointer disabled:opacity-50"
-              >
-                {btn.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* 4. DAILY WALK (NEAT) CARD */}
-        <section className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <Footprints className="w-5 h-5" />
-                <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                  Daily Walk (NEAT)
-                </span>
-              </div>
-              {goals?.dailyWalkMinMinutes || goals?.dailyWalkMaxMinutes ? (
-                <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                  {goals.dailyWalkMinMinutes && goals.dailyWalkMaxMinutes
-                    ? `${goals.dailyWalkMinMinutes} - ${goals.dailyWalkMaxMinutes} min`
-                    : `${goals.dailyWalkMinMinutes ?? goals.dailyWalkMaxMinutes} min`}
-                </span>
-              ) : (
-                <span className="text-[11px] font-mono text-zinc-500">Not configured</span>
-              )}
-            </div>
-
-            {/* Strategic Notes */}
-            {goals?.dailyWalkNotes ? (
-              <p className="mt-2 text-xs text-zinc-400 font-mono bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
-                👟 {goals.dailyWalkNotes}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-zinc-600 font-mono italic">
-                No active metabolic rate walk note specified.
-              </p>
-            )}
-
-            {/* Progress Display */}
-            <div className="mt-4">
-              <div className="flex justify-between items-baseline font-mono text-xs mb-1.5">
-                <span className="text-zinc-400">Walk Time Today:</span>
-                <span className="font-bold text-zinc-100">
-                  <span className="text-emerald-400 text-sm font-black">{goals?.todayWalkMinutes ?? 0}m</span>
-                  {goals?.dailyWalkMinMinutes
-                    ? ` / ${goals.dailyWalkMinMinutes}${goals.dailyWalkMaxMinutes ? `-${goals.dailyWalkMaxMinutes}` : ""}m`
-                    : ""}
-                </span>
-              </div>
-              <div className="w-full bg-zinc-950 h-2.5 rounded-full overflow-hidden border border-zinc-800">
-                <div
-                  className="h-full bg-emerald-500 transition-all duration-300"
-                  style={{
-                    width: `${
-                      goals?.dailyWalkMinMinutes
-                        ? Math.min(100, Math.round(((goals.todayWalkMinutes ?? 0) / goals.dailyWalkMinMinutes) * 100))
-                        : 0
-                    }%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Walk Buttons */}
-          <div className="mt-5 pt-3 border-t border-zinc-800/80 flex items-center gap-2">
-            {[
-              { label: "+10m", val: 10 },
-              { label: "+15m", val: 15 },
-              { label: "+30m", val: 30 },
-            ].map((btn) => (
-              <button
-                key={btn.label}
-                type="button"
-                onClick={() => handleQuickLog("walk", btn.val, "add")}
-                disabled={isPending}
-                className="flex-1 py-1.5 text-xs font-mono rounded-lg bg-zinc-800 hover:bg-zinc-750 text-emerald-300 border border-zinc-700/60 transition cursor-pointer disabled:opacity-50"
-              >
-                {btn.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* 5. TRAINING ADHERENCE & DISCIPLINE CARD */}
-        <section className="p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between md:col-span-2 lg:col-span-2">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-purple-400">
-                <Dumbbell className="w-5 h-5" />
-                <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-200">
-                  Training Discipline & Frequency
-                </span>
-              </div>
-              {goals?.trainingDaysPerWeek ? (
-                <span className="text-xs font-mono font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
-                  Target: {goals.trainingDaysPerWeek} Days / Week
-                </span>
-              ) : (
-                <span className="text-[11px] font-mono text-zinc-500">Not configured</span>
-              )}
-            </div>
-
-            {/* Strategic Notes */}
-            {goals?.trainingNotes ? (
-              <p className="mt-2 text-xs text-zinc-300 font-mono bg-zinc-950/60 p-3 rounded-xl border border-zinc-850 leading-relaxed">
-                🎯 {goals.trainingNotes}
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-zinc-600 font-mono italic">
-                No technical failure or execution discipline standard specified.
-              </p>
-            )}
-
-            {/* Weekly Status Summary */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-                <div className="text-[11px] font-mono text-zinc-500 uppercase">This Week&apos;s Sessions</div>
-                <div className="text-lg font-mono font-black text-purple-400 mt-0.5">
-                  {goals?.weeklyWorkoutsCompleted ?? 0}
-                  {goals?.trainingDaysPerWeek ? ` / ${goals.trainingDaysPerWeek} Completed` : " Completed"}
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
-                <div>
-                  <div className="text-[11px] font-mono text-zinc-500 uppercase">Today&apos;s Workout</div>
-                  <div className="text-xs font-mono font-bold text-zinc-200 mt-0.5">
-                    {goals?.todayTrainingCompleted ? "✅ Session Done" : "⏳ Pending Session"}
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-base shrink-0">
+                    {item.category === "food"
+                      ? "🍽️"
+                      : item.category === "water"
+                      ? "💧"
+                      : item.category === "walk"
+                      ? "👟"
+                      : "🏋️"}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium truncate">
+                      {item.rawText}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mt-0.5">
+                      {item.calories > 0 && (
+                        <span className="text-amber-400 font-semibold">
+                          +{item.calories} kcal
+                        </span>
+                      )}
+                      {item.protein > 0 && (
+                        <span className="text-emerald-400 font-semibold">
+                          +{item.protein}g protein
+                        </span>
+                      )}
+                      {item.waterLiters > 0 && (
+                        <span className="text-cyan-400 font-semibold">
+                          +{item.waterLiters}L
+                        </span>
+                      )}
+                      {item.walkMinutes > 0 && (
+                        <span className="text-purple-400 font-semibold">
+                          +{item.walkMinutes}m walk
+                        </span>
+                      )}
+                      <span className="text-zinc-600">•</span>
+                      <span className="text-zinc-500 text-[11px]">
+                        {new Date(item.timestamp).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
                   </div>
                 </div>
+
                 <button
-                  type="button"
-                  onClick={() => handleQuickLog("training", !goals?.todayTrainingCompleted, "set")}
+                  onClick={() => handleDeleteItem(item.id)}
                   disabled={isPending}
-                  className={`p-2 rounded-xl transition cursor-pointer border ${
-                    goals?.todayTrainingCompleted
-                      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40"
-                      : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200"
-                  }`}
+                  className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0"
+                  title="Remove this item"
                 >
-                  {goals?.todayTrainingCompleted ? (
-                    <CheckCircle2 className="w-6 h-6" />
-                  ) : (
-                    <Circle className="w-6 h-6" />
-                  )}
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-            </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* SECONDARY SECTION: Training Plans (Weekly Split & Monthly Mesocycle) */}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 md:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-indigo-400" />
+              Training Roadmap
+            </h3>
+            <p className="text-xs text-zinc-400 font-mono">
+              7-Day training split &amp; 4-week progressive overload mesocycle
+            </p>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono text-zinc-400">
-            <span>Layer 0 Safeguard: Stop all sets at technical breakdown.</span>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
             <button
-              type="button"
-              onClick={() => handleQuickLog("training", !goals?.todayTrainingCompleted, "set")}
-              className="text-purple-400 hover:text-purple-300 font-bold underline cursor-pointer"
+              onClick={() => setActivePlanTab(activePlanTab === "weekly" ? null : "weekly")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-colors ${
+                activePlanTab === "weekly"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-750"
+              }`}
             >
-              {goals?.todayTrainingCompleted ? "Mark Incomplete" : "Mark Done Today"}
+              Weekly Split {activePlanTab === "weekly" ? "▲" : "▼"}
+            </button>
+            <button
+              onClick={() => setActivePlanTab(activePlanTab === "monthly" ? null : "monthly")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-colors ${
+                activePlanTab === "monthly"
+                  ? "bg-purple-600 text-white"
+                  : "bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-750"
+              }`}
+            >
+              Monthly Mesocycle {activePlanTab === "monthly" ? "▲" : "▼"}
             </button>
           </div>
-        </section>
-      </div>
-        </>
-      )}
+        </div>
 
-      {/* PERIOD TAB 2: WEEKLY TRAINING & DEFICIT PLAN */}
-      {periodTab === "weekly" && (
-        <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-          {/* Empty State Banner if no weekly plan is set */}
-          {!hasWeeklyTargetSet && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
-              <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-                <CalendarDays className="w-7 h-7" />
-              </div>
-              <div className="max-w-md">
-                <h2 className="text-base sm:text-lg font-black font-mono text-zinc-100 uppercase tracking-wide">
-                  No Weekly Plan Configured Yet
-                </h2>
-                <p className="text-xs text-zinc-400 font-mono mt-1.5 leading-relaxed">
-                  Map out your 7-day training split, weekly walk volume, and deficit goals. Start with a clean schedule or load the recommended 5-day double-progression split.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+        {/* Weekly Split View (Expandable) */}
+        {activePlanTab === "weekly" && (
+          <div className="space-y-4 pt-2 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono text-zinc-400">
+                Weekly Target: {goals?.weeklyWorkoutsTarget ? `${goals.weeklyWorkoutsTarget} Workouts` : "Unset"} •{" "}
+                {goals?.weeklyWalkMinutesTarget ? `${goals.weeklyWalkMinutesTarget}m Walk` : "Unset"}
+              </span>
+              {(!goals?.weeklySplitSchedule || goals.weeklySplitSchedule.length === 0) && (
                 <button
-                  type="button"
-                  onClick={() => setIsWeeklyConfigOpen(true)}
-                  className="text-xs font-mono font-bold px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-2 transition cursor-pointer border border-zinc-700"
+                  onClick={handleLoadWeeklyTemplate}
+                  disabled={isPending}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-mono flex items-center gap-1.5 transition-colors"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Configure Custom Split</span>
+                  <Zap className="w-3 h-3" />
+                  Load Recommended 5-Day Split
                 </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await handleLoadRecommendedWeekly();
-                    setIsWeeklyConfigOpen(true);
-                  }}
-                  className="text-xs font-mono font-bold px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 flex items-center gap-2 transition cursor-pointer shadow-lg shadow-indigo-500/20"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Load Recommended 5-Day Plan</span>
-                </button>
-              </div>
+              )}
             </div>
-          )}
 
-          {/* Weekly Targets Overview Card */}
-          {hasWeeklyTargetSet && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Target Workouts</div>
-                  <div className="text-xl font-mono font-black text-indigo-400 mt-1">
-                    {goals?.weeklyWorkoutsCompleted ?? 0}
-                    {goals?.weeklyWorkoutsTarget ? ` / ${goals.weeklyWorkoutsTarget} Sessions` : " Sessions"}
-                  </div>
-                </div>
-                <div className="w-full bg-zinc-950 h-1.5 rounded-full overflow-hidden mt-3 border border-zinc-850">
-                  <div
-                    className="h-full bg-indigo-400 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${goals?.weeklyWorkoutsTarget ? Math.min(100, ((goals.weeklyWorkoutsCompleted ?? 0) / goals.weeklyWorkoutsTarget) * 100) : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Weekly Walk Target</div>
-                  <div className="text-xl font-mono font-black text-emerald-400 mt-1">
-                    {goals?.weeklyWalkMinutesTarget ? `${goals.weeklyWalkMinutesTarget} min` : "Unset"}
-                  </div>
-                </div>
-                <p className="text-[11px] font-mono text-zinc-400 mt-2">Active NEAT metabolic rate support</p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Calorie Deficit Target</div>
-                  <div className="text-xl font-mono font-black text-orange-400 mt-1">
-                    {goals?.weeklyCalorieDeficitTarget ? `~${goals.weeklyCalorieDeficitTarget} kcal` : "Unset"}
-                  </div>
-                </div>
-                <p className="text-[11px] font-mono text-zinc-400 mt-2">Cumulative fat-loss deficit standard</p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Split Architecture</div>
-                  <div className="text-sm font-mono font-bold text-zinc-200 mt-1 truncate">
-                    {goals?.weeklySplitSchedule?.length
-                      ? `${goals.weeklySplitSchedule.filter((d) => !d.isRest).length} Training / ${goals.weeklySplitSchedule.filter((d) => d.isRest).length} Recovery`
-                      : "Custom Architecture"}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsWeeklyConfigOpen(true)}
-                  className="mt-2 text-xs font-mono text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer self-start"
-                >
-                  <Sliders className="w-3 h-3" />
-                  <span>Edit Schedule</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Strategy Notes Banner */}
-          {goals?.weeklyFocusNotes && (
-            <div className="p-4 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-indigo-200 font-mono text-xs flex items-start gap-3 shadow-lg">
-              <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold uppercase tracking-wider block text-indigo-300 mb-0.5">
-                  Weekly Execution Standard:
-                </span>
-                <p className="leading-relaxed">{goals.weeklyFocusNotes}</p>
-              </div>
-            </div>
-          )}
-
-          {/* 7-Day Split Schedule Grid */}
-          {goals?.weeklySplitSchedule && goals.weeklySplitSchedule.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-indigo-400" />
-                  <h3 className="text-xs font-mono font-black text-zinc-300 uppercase tracking-wider">
-                    7-Day Prescribed Schedule
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsWeeklyConfigOpen(true)}
-                  className="text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>Edit Split</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+            {goals?.weeklySplitSchedule && goals.weeklySplitSchedule.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                 {goals.weeklySplitSchedule.map((day, idx) => (
                   <div
                     key={idx}
-                    className={`p-3.5 rounded-2xl border flex flex-col justify-between transition ${
+                    className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
                       day.isRest
-                        ? "bg-zinc-950/80 border-zinc-850 text-zinc-400"
-                        : "bg-zinc-900/90 border-zinc-800 text-zinc-100 shadow-md shadow-black/40"
+                        ? "bg-zinc-950/60 border-zinc-800 text-zinc-400"
+                        : "bg-zinc-800/60 border-zinc-700 text-white"
                     }`}
                   >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
-                          {day.day}
-                        </span>
-                        <span
-                          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
-                            day.isRest
-                              ? "bg-zinc-800 text-zinc-400 border border-zinc-700"
-                              : "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
-                          }`}
-                        >
-                          {day.isRest ? "REST / WALK" : "WORKOUT"}
-                        </span>
-                      </div>
-                      <div className="text-xs font-mono font-bold text-zinc-200 mb-1 line-clamp-2">
-                        {day.title}
-                      </div>
-                      <p className="text-[10px] font-mono text-zinc-400 leading-relaxed line-clamp-3">
-                        {day.focus}
-                      </p>
+                    <div className="flex items-center justify-between font-mono font-bold">
+                      <span className={day.isRest ? "text-zinc-500" : "text-indigo-400"}>
+                        {day.day}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-black/40">
+                        {day.isRest ? "RECOVERY" : "TRAINING"}
+                      </span>
                     </div>
+                    <p className="font-bold">{day.title}</p>
+                    <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      {day.focus}
+                    </p>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* PERIOD TAB 3: MONTHLY PROGRESSIVE OVERLOAD MESOCYCLE */}
-      {periodTab === "monthly" && (
-        <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-          {/* Empty State Banner if no monthly mesocycle is configured */}
-          {!hasMonthlyTargetSet && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
-              <div className="w-14 h-14 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                <Layers className="w-7 h-7" />
-              </div>
-              <div className="max-w-md">
-                <h2 className="text-base sm:text-lg font-black font-mono text-zinc-100 uppercase tracking-wide">
-                  No Monthly Mesocycle Configured Yet
-                </h2>
-                <p className="text-xs text-zinc-400 font-mono mt-1.5 leading-relaxed">
-                  Plan your 4-week progressive overload block, scheduled deload week, and monthly body recomposition milestones.
+            ) : (
+              <div className="p-6 text-center border border-dashed border-zinc-800 rounded-xl space-y-2">
+                <p className="text-xs text-zinc-400">
+                  No weekly split configured yet. Click &quot;Load Recommended 5-Day Split&quot; to populate.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            )}
+          </div>
+        )}
+
+        {/* Monthly Mesocycle View (Expandable) */}
+        {activePlanTab === "monthly" && (
+          <div className="space-y-4 pt-2 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono text-zinc-400">
+                {goals?.monthlyMesocycleName || "4-Week Mesocycle Block"} •{" "}
+                {goals?.monthlyPrimaryGoal || "Hypertrophy / Recomposition"}
+              </span>
+              {(!goals?.monthlyPhases || goals.monthlyPhases.length === 0) && (
                 <button
-                  type="button"
-                  onClick={() => setIsMonthlyConfigOpen(true)}
-                  className="text-xs font-mono font-bold px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-2 transition cursor-pointer border border-zinc-700"
+                  onClick={handleLoadMonthlyTemplate}
+                  disabled={isPending}
+                  className="px-3 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-mono flex items-center gap-1.5 transition-colors"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Configure Mesocycle</span>
+                  <Zap className="w-3 h-3" />
+                  Load Recommended 4-Week Block
                 </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await handleLoadRecommendedMonthly();
-                    setIsMonthlyConfigOpen(true);
-                  }}
-                  className="text-xs font-mono font-bold px-5 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 flex items-center gap-2 transition cursor-pointer shadow-lg shadow-purple-500/20"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Load 4-Week Overload Block</span>
-                </button>
-              </div>
+              )}
             </div>
-          )}
 
-          {/* Mesocycle Overview Card */}
-          {hasMonthlyTargetSet && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Mesocycle Block</div>
-                  <div className="text-base font-mono font-black text-purple-400 mt-1 truncate">
-                    {goals?.monthlyMesocycleName || "4-Week Block"}
-                  </div>
-                </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold self-start mt-2">
-                  AUTOREGULATED 4 WEEKS
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Primary Training Goal</div>
-                  <div className="text-sm font-mono font-bold text-zinc-200 mt-1 capitalize">
-                    {goals?.monthlyPrimaryGoal || "Hypertrophy & Deficit"}
-                  </div>
-                </div>
-                <p className="text-[11px] font-mono text-zinc-400 mt-2">Progressive overload + fat-loss deficit</p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Monthly Recomp Target</div>
-                  <div className="text-xl font-mono font-black text-emerald-400 mt-1">
-                    {goals?.monthlyWeightLossTargetKg ? `-${goals.monthlyWeightLossTargetKg} kg` : "Unset"}
-                  </div>
-                </div>
-                <p className="text-[11px] font-mono text-zinc-400 mt-2">Steady fat loss with lean mass preservation</p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Total Sessions Target</div>
-                  <div className="text-xl font-mono font-black text-indigo-400 mt-1">
-                    {goals?.monthlyTotalWorkoutsTarget ? `${goals.monthlyTotalWorkoutsTarget} Workouts` : "20 Sessions"}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMonthlyConfigOpen(true)}
-                  className="mt-2 text-xs font-mono text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1 cursor-pointer self-start"
-                >
-                  <Sliders className="w-3 h-3" />
-                  <span>Edit Block</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Mesocycle Strategic Notes */}
-          {goals?.monthlyFocusNotes && (
-            <div className="p-4 rounded-2xl bg-purple-950/30 border border-purple-500/20 text-purple-200 font-mono text-xs flex items-start gap-3 shadow-lg">
-              <Award className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold uppercase tracking-wider block text-purple-300 mb-0.5">
-                  Monthly Block Objective:
-                </span>
-                <p className="leading-relaxed">{goals.monthlyFocusNotes}</p>
-              </div>
-            </div>
-          )}
-
-          {/* 4-Week Progression Roadmap Cards */}
-          {goals?.monthlyPhases && goals.monthlyPhases.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-purple-400" />
-                  <h3 className="text-xs font-mono font-black text-zinc-300 uppercase tracking-wider">
-                    4-Week Progression Roadmap
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMonthlyConfigOpen(true)}
-                  className="text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>Edit Phases</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {goals.monthlyPhases.map((phase) => (
+            {goals?.monthlyPhases && goals.monthlyPhases.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {goals.monthlyPhases.map((phase, idx) => (
                   <div
-                    key={phase.weekNumber}
-                    className={`p-4 rounded-2xl border flex flex-col justify-between transition ${
-                      phase.weekNumber === 4
-                        ? "bg-teal-950/20 border-teal-500/30"
-                        : "bg-zinc-900/90 border-zinc-800 shadow-md shadow-black/40"
-                    }`}
+                    key={idx}
+                    className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-850/60 space-y-2 text-xs"
                   >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
-                          WEEK {phase.weekNumber}
-                        </span>
-                        <span
-                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
-                            phase.weekNumber === 4
-                              ? "bg-teal-500/20 text-teal-300 border border-teal-500/30"
-                              : phase.weekNumber === 3
-                              ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                              : "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                          }`}
-                        >
-                          {phase.intensityRpe}
-                        </span>
-                      </div>
-                      <h4 className="text-xs font-mono font-bold text-zinc-100 mb-1">
-                        {phase.phaseName}
-                      </h4>
-                      <div className="text-[11px] font-mono text-zinc-400 mb-2 font-medium">
-                        📊 {phase.volumeDescription}
-                      </div>
-                      <p className="text-[10px] font-mono text-zinc-400 leading-relaxed bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
-                        {phase.focusNotes}
-                      </p>
+                    <div className="flex items-center justify-between font-mono font-bold">
+                      <span className="text-purple-400">Week {phase.weekNumber}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-black/40 text-zinc-300">
+                        {phase.intensityRpe}
+                      </span>
                     </div>
+                    <p className="font-bold text-white">{phase.phaseName}</p>
+                    <p className="text-[11px] text-zinc-400">{phase.volumeDescription}</p>
+                    <p className="text-[10px] text-zinc-500 font-mono italic">{phase.focusNotes}</p>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            ) : (
+              <div className="p-6 text-center border border-dashed border-zinc-800 rounded-xl space-y-2">
+                <p className="text-xs text-zinc-400">
+                  No monthly mesocycle configured yet. Click &quot;Load Recommended 4-Week Block&quot; to populate.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
-      {/* MODAL: CONFIGURE / EDIT GOALS (Completely empty by default) */}
+      {/* TARGET CONFIGURATION MODAL */}
       {isConfigOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl space-y-4">
+            <div className="p-5 border-b border-zinc-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-emerald-400" />
-                <h2 className="text-sm font-black font-mono uppercase tracking-wider text-zinc-100">
-                  Configure My Daily Targets
-                </h2>
+                <h3 className="text-base font-bold text-white font-mono">
+                  CUSTOMIZE GOAL TARGETS
+                </h3>
               </div>
               <button
-                type="button"
                 onClick={() => setIsConfigOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+                className="text-zinc-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Form Content */}
-            <form onSubmit={handleSaveGoals} className="overflow-y-auto p-6 space-y-6 flex-1">
-              {/* 1. Calories */}
-              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-                <div className="flex items-center gap-2 text-orange-400 text-xs font-mono font-bold uppercase">
-                  <Flame className="w-4 h-4" />
-                  <span>Calories Target</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Target (kcal)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 1900"
-                      value={form.caloriesTarget}
-                      onChange={(e) => setForm({ ...form, caloriesTarget: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Deficit / Strategy Notes</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., maintains your fat-loss deficit"
-                      value={form.caloriesNotes}
-                      onChange={(e) => setForm({ ...form, caloriesNotes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500"
-                    />
-                  </div>
+            <form onSubmit={handleSaveTargets} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div className="flex justify-between items-center pb-2 border-b border-zinc-800/80">
+                <span className="text-xs text-zinc-400 font-mono">
+                  Zero prefill default: only set what you want
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLoadRecommendedTargets}
+                  className="text-xs text-emerald-400 hover:underline font-mono"
+                >
+                  ⚡ Load Recommended
+                </button>
+              </div>
+
+              {/* Calories */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Flame className="w-3.5 h-3.5 text-amber-400" /> Target Calories (kcal)
+                </label>
+                <input
+                  type="number"
+                  value={form.caloriesTarget}
+                  onChange={(e) => setForm({ ...form, caloriesTarget: e.target.value })}
+                  placeholder="e.g. 1900"
+                  className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                />
+              </div>
+
+              {/* Protein */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Beef className="w-3.5 h-3.5 text-emerald-400" /> Protein Range (Grams)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={form.proteinMinGrams}
+                    onChange={(e) => setForm({ ...form, proteinMinGrams: e.target.value })}
+                    placeholder="Min (e.g. 60)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    type="number"
+                    value={form.proteinMaxGrams}
+                    onChange={(e) => setForm({ ...form, proteinMaxGrams: e.target.value })}
+                    placeholder="Max (e.g. 75)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
                 </div>
               </div>
 
-              {/* 2. Protein */}
-              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-                <div className="flex items-center gap-2 text-rose-400 text-xs font-mono font-bold uppercase">
-                  <Beef className="w-4 h-4" />
-                  <span>Protein Target</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Min (grams)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 60"
-                      value={form.proteinMinGrams}
-                      onChange={(e) => setForm({ ...form, proteinMinGrams: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Max (grams)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 70"
-                      value={form.proteinMaxGrams}
-                      onChange={(e) => setForm({ ...form, proteinMaxGrams: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Food Staples / Meal Sources</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., 4 eggs + chicken breast + family staples"
-                      value={form.proteinNotes}
-                      onChange={(e) => setForm({ ...form, proteinNotes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
+              {/* Water */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Droplets className="w-3.5 h-3.5 text-cyan-400" /> Water Intake Range (Liters)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={form.waterMinLiters}
+                    onChange={(e) => setForm({ ...form, waterMinLiters: e.target.value })}
+                    placeholder="Min (e.g. 3.0)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={form.waterMaxLiters}
+                    onChange={(e) => setForm({ ...form, waterMaxLiters: e.target.value })}
+                    placeholder="Max (e.g. 3.5)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
                 </div>
               </div>
 
-              {/* 3. Water */}
-              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-                <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono font-bold uppercase">
-                  <Droplets className="w-4 h-4" />
-                  <span>Daily Water Intake</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Min (Liters)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="e.g., 3.0"
-                      value={form.waterMinLiters}
-                      onChange={(e) => setForm({ ...form, waterMinLiters: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Max (Liters)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      placeholder="e.g., 3.5"
-                      value={form.waterMaxLiters}
-                      onChange={(e) => setForm({ ...form, waterMaxLiters: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Hydration Reminder Notes</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., drink 1L with workout, 2.5L rest of day"
-                      value={form.waterNotes}
-                      onChange={(e) => setForm({ ...form, waterNotes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
+              {/* Walk */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Footprints className="w-3.5 h-3.5 text-purple-400" /> Daily Walk Duration (Minutes)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    value={form.dailyWalkMinMinutes}
+                    onChange={(e) => setForm({ ...form, dailyWalkMinMinutes: e.target.value })}
+                    placeholder="Min (e.g. 20)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    type="number"
+                    value={form.dailyWalkMaxMinutes}
+                    onChange={(e) => setForm({ ...form, dailyWalkMaxMinutes: e.target.value })}
+                    placeholder="Max (e.g. 30)"
+                    className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                  />
                 </div>
               </div>
 
-              {/* 4. Daily Walk */}
-              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-                <div className="flex items-center gap-2 text-emerald-400 text-xs font-mono font-bold uppercase">
-                  <Footprints className="w-4 h-4" />
-                  <span>Daily Walk (NEAT)</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Min (Minutes)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 20"
-                      value={form.dailyWalkMinMinutes}
-                      onChange={(e) => setForm({ ...form, dailyWalkMinMinutes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Max (Minutes)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 30"
-                      value={form.dailyWalkMaxMinutes}
-                      onChange={(e) => setForm({ ...form, dailyWalkMaxMinutes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Metabolic Rate Notes</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., keeps metabolic rate active outside the gym"
-                      value={form.dailyWalkNotes}
-                      onChange={(e) => setForm({ ...form, dailyWalkNotes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                </div>
+              {/* Training */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Dumbbell className="w-3.5 h-3.5 text-indigo-400" /> Target Training Days / Week
+                </label>
+                <input
+                  type="number"
+                  value={form.trainingDaysPerWeek}
+                  onChange={(e) => setForm({ ...form, trainingDaysPerWeek: e.target.value })}
+                  placeholder="e.g. 5"
+                  className="w-full bg-black/60 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white"
+                />
               </div>
 
-              {/* 5. Training Adherence */}
-              <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-850 space-y-3">
-                <div className="flex items-center gap-2 text-purple-400 text-xs font-mono font-bold uppercase">
-                  <Dumbbell className="w-4 h-4" />
-                  <span>Training Frequency & Technical Failure Rule</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">Days / Week</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="7"
-                      placeholder="e.g., 5"
-                      value={form.trainingDaysPerWeek}
-                      onChange={(e) => setForm({ ...form, trainingDaysPerWeek: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-3">
-                    <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                      Execution Standard & Pain-Free Rules
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Complete prescribed session, stopping all sets at technical failure (zero swinging, zero knee/back pain)"
-                      value={form.trainingNotes}
-                      onChange={(e) => setForm({ ...form, trainingNotes: e.target.value })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Modal Footer Controls */}
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-between gap-3">
-                {hasAnyTargetSet ? (
-                  <button
-                    type="button"
-                    onClick={handleClearAllGoals}
-                    disabled={isPending}
-                    className="text-xs font-mono text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 px-3 py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span>Clear All Targets</span>
-                  </button>
-                ) : (
-                  <div />
-                )}
-
+              <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className="text-xs text-red-400 hover:underline font-mono"
+                >
+                  Clear All Goals
+                </button>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setIsConfigOpen(false)}
-                    className="text-xs font-mono px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl text-xs font-mono text-zinc-400 hover:text-white"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isPending}
-                    className="text-xs font-mono font-bold px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition cursor-pointer shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono shadow-md shadow-emerald-600/20"
                   >
-                    {isPending ? "Saving..." : "Save My Goals"}
+                    Save Targets
                   </button>
                 </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: CONFIGURE WEEKLY PLAN */}
-      {isWeeklyConfigOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="w-5 h-5 text-indigo-400" />
-                <h2 className="text-sm font-black font-mono uppercase tracking-wider text-zinc-100">
-                  Configure Weekly Training & Habit Plan
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsWeeklyConfigOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <form onSubmit={handleSaveWeeklyPlan} className="p-6 overflow-y-auto space-y-5">
-              {/* Quick Template loader */}
-              <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-mono font-bold text-indigo-300">
-                    ⚡ 1-Click Recommended 5-Day Plan
-                  </div>
-                  <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
-                    Populate an optimal Push/Pull/Legs/Upper split with 175m active walk & 3,150 kcal deficit.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleLoadRecommendedWeekly}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 text-xs font-mono font-bold transition cursor-pointer shrink-0 self-start sm:self-auto"
-                >
-                  Load 5-Day Split
-                </button>
-              </div>
-
-              {/* Weekly Targets */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Target Workouts / Week
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="7"
-                    placeholder="e.g., 5"
-                    value={weeklyForm.weeklyWorkoutsTarget}
-                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyWorkoutsTarget: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Weekly Walk Target (Minutes)
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 175"
-                    value={weeklyForm.weeklyWalkMinutesTarget}
-                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyWalkMinutesTarget: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Weekly Calorie Deficit (kcal)
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 3150"
-                    value={weeklyForm.weeklyCalorieDeficitTarget}
-                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyCalorieDeficitTarget: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* Weekly Focus Notes */}
-              <div>
-                <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                  Weekly Execution & Discipline Standard
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g., Complete prescribed reps with double progression; stop at technical failure; zero pain standard."
-                  value={weeklyForm.weeklyFocusNotes}
-                  onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyFocusNotes: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              {/* 7-Day Split Days Editor */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider block">
-                    7-Day Split Days (Mon - Sun)
-                  </label>
-                  {weeklyForm.weeklySplitSchedule.length === 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setWeeklyForm({
-                          ...weeklyForm,
-                          weeklySplitSchedule: [
-                            { day: "Mon", title: "Push", focus: "Chest & Shoulders", isRest: false },
-                            { day: "Tue", title: "Pull", focus: "Back & Biceps", isRest: false },
-                            { day: "Wed", title: "Active Recovery", focus: "30m Brisk Walk", isRest: true },
-                            { day: "Thu", title: "Legs", focus: "Squats & Calves", isRest: false },
-                            { day: "Fri", title: "Upper Body", focus: "Chest, Back, Arms", isRest: false },
-                            { day: "Sat", title: "Conditioning & Walk", focus: "Zone 2 Cardio", isRest: false },
-                            { day: "Sun", title: "Rest", focus: "Full Recovery", isRest: true },
-                          ],
-                        })
-                      }
-                      className="text-xs font-mono text-indigo-400 hover:text-indigo-300 font-bold"
-                    >
-                      + Add 7 Blank Days
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2.5">
-                  {weeklyForm.weeklySplitSchedule.map((day, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
-                    >
-                      <div className="sm:col-span-2 font-mono font-bold text-xs text-indigo-400 uppercase">
-                        {day.day}
-                      </div>
-                      <div className="sm:col-span-4">
-                        <input
-                          type="text"
-                          placeholder="Session title..."
-                          value={day.title}
-                          onChange={(e) => {
-                            const updated = [...weeklyForm.weeklySplitSchedule];
-                            updated[idx] = { ...updated[idx], title: e.target.value };
-                            setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
-                          }}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div className="sm:col-span-4">
-                        <input
-                          type="text"
-                          placeholder="Target focus / movements..."
-                          value={day.focus}
-                          onChange={(e) => {
-                            const updated = [...weeklyForm.weeklySplitSchedule];
-                            updated[idx] = { ...updated[idx], focus: e.target.value };
-                            setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
-                          }}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div className="sm:col-span-2 flex items-center justify-end">
-                        <label className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={day.isRest}
-                            onChange={(e) => {
-                              const updated = [...weeklyForm.weeklySplitSchedule];
-                              updated[idx] = { ...updated[idx], isRest: e.target.checked };
-                              setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
-                            }}
-                            className="rounded border-zinc-700 text-indigo-500 focus:ring-0"
-                          />
-                          <span>Rest Day</span>
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsWeeklyConfigOpen(false)}
-                  className="text-xs font-mono px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="text-xs font-mono font-bold px-5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 transition cursor-pointer shadow-lg shadow-indigo-500/20 disabled:opacity-50"
-                >
-                  {isPending ? "Saving..." : "Save Weekly Plan"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: CONFIGURE MONTHLY MESOCYCLE */}
-      {isMonthlyConfigOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
-              <div className="flex items-center gap-2">
-                <Layers className="w-5 h-5 text-purple-400" />
-                <h2 className="text-sm font-black font-mono uppercase tracking-wider text-zinc-100">
-                  Configure 4-Week Mesocycle Roadmap
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsMonthlyConfigOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <form onSubmit={handleSaveMonthlyPlan} className="p-6 overflow-y-auto space-y-5">
-              {/* Quick Template loader */}
-              <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-mono font-bold text-purple-300">
-                    ⚡ 1-Click Recommended 4-Week Block
-                  </div>
-                  <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
-                    Accumulation (RPE 7-8) ➔ Progressive Overload (RPE 8-8.5) ➔ Peak Overreach (RPE 9-10) ➔ Deload (RPE 6-7).
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleLoadRecommendedMonthly}
-                  className="px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 text-xs font-mono font-bold transition cursor-pointer shrink-0 self-start sm:self-auto"
-                >
-                  Load 4-Week Overload
-                </button>
-              </div>
-
-              {/* Monthly Targets */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Mesocycle Block Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., 4-Week Autoregulated Block"
-                    value={monthlyForm.monthlyMesocycleName}
-                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyMesocycleName: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Primary Training Goal
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., Recomposition / Hypertrophy + Fat-Loss"
-                    value={monthlyForm.monthlyPrimaryGoal}
-                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyPrimaryGoal: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Monthly Weight Loss / Delta (kg)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="e.g., 1.8"
-                    value={monthlyForm.monthlyWeightLossTargetKg}
-                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyWeightLossTargetKg: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                    Total Workouts in Block
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 20"
-                    value={monthlyForm.monthlyTotalWorkoutsTarget}
-                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyTotalWorkoutsTarget: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-              </div>
-
-              {/* Monthly Focus Notes */}
-              <div>
-                <label className="text-[11px] font-mono text-zinc-400 block mb-1">
-                  Monthly Block Strategy & Autoregulation Directive
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g., Maintain 450 kcal deficit with high protein; micro-load weekly and execute deload on Week 4."
-                  value={monthlyForm.monthlyFocusNotes}
-                  onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyFocusNotes: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                />
-              </div>
-
-              {/* 4-Week Phase Editors */}
-              <div className="space-y-3">
-                <label className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider block">
-                  4-Week Progression Phases
-                </label>
-
-                <div className="space-y-3">
-                  {monthlyForm.monthlyPhases.map((phase, idx) => (
-                    <div key={idx} className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-xs text-purple-400 uppercase">
-                          Week {phase.weekNumber} Phase
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        <div className="sm:col-span-2">
-                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Phase Name</label>
-                          <input
-                            type="text"
-                            placeholder="Phase name..."
-                            value={phase.phaseName}
-                            onChange={(e) => {
-                              const updated = [...monthlyForm.monthlyPhases];
-                              updated[idx] = { ...updated[idx], phaseName: e.target.value };
-                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
-                            }}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Target RPE</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. RPE 7-8"
-                            value={phase.intensityRpe}
-                            onChange={(e) => {
-                              const updated = [...monthlyForm.monthlyPhases];
-                              updated[idx] = { ...updated[idx], intensityRpe: e.target.value };
-                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
-                            }}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Volume Description</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. 3 sets @ 70% 1RM..."
-                            value={phase.volumeDescription}
-                            onChange={(e) => {
-                              const updated = [...monthlyForm.monthlyPhases];
-                              updated[idx] = { ...updated[idx], volumeDescription: e.target.value };
-                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
-                            }}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Strategy Directives</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Establish baseline loads..."
-                            value={phase.focusNotes}
-                            onChange={(e) => {
-                              const updated = [...monthlyForm.monthlyPhases];
-                              updated[idx] = { ...updated[idx], focusNotes: e.target.value };
-                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
-                            }}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsMonthlyConfigOpen(false)}
-                  className="text-xs font-mono px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="text-xs font-mono font-bold px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 transition cursor-pointer shadow-lg shadow-purple-500/20 disabled:opacity-50"
-                >
-                  {isPending ? "Saving..." : "Save Mesocycle"}
-                </button>
               </div>
             </form>
           </div>

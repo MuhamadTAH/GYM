@@ -144,6 +144,8 @@ export async function GET(request: Request) {
             "get_training_plans",
             "update_training_plans",
             "get_recommended_plans",
+            "log_natural_entry",
+            "delete_logged_entry",
           ],
         },
       },

@@ -25,6 +25,8 @@ import {
   saveDailyGoalsAction,
   getRecommendedWeeklyPlanAction,
   getRecommendedMonthlyPlanAction,
+  logNaturalEntryAction,
+  deleteLoggedItemAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -524,6 +526,56 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
       },
+      {
+        name: "log_natural_entry",
+        description:
+          "Log food/meals, water hydration, walking, or training using natural language (e.g. 'I ate 4 eggs', 'chicken breast 200g with rice', 'drank 500ml water', 'walked 25 mins'). The system automatically estimates calories and protein, or you can provide custom macro overrides.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+              description: "Natural language description of what the athlete ate, drank, walked, or trained.",
+            },
+            calories: {
+              type: "number",
+              description: "Optional calorie estimate override (kcal) calculated by the AI.",
+            },
+            protein: {
+              type: "number",
+              description: "Optional protein estimate override in grams calculated by the AI.",
+            },
+            water_liters: {
+              type: "number",
+              description: "Optional water volume in Liters.",
+            },
+            walk_minutes: {
+              type: "number",
+              description: "Optional walking duration in minutes.",
+            },
+            training_completed: {
+              type: "boolean",
+              description: "Optional flag marking today's workout completed.",
+            },
+          },
+          required: ["text"],
+        },
+      },
+      {
+        name: "delete_logged_entry",
+        description:
+          "Delete a previously logged meal/activity by item ID and automatically subtract its calories, protein, or water from today's totals.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            item_id: {
+              type: "string",
+              description: "The unique ID of the logged item to remove.",
+            },
+          },
+          required: ["item_id"],
+        },
+      },
     ],
   };
 });
@@ -891,6 +943,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify({ weekly, monthly }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "log_natural_entry": {
+        const text = String(args?.text || "").trim();
+        if (!text) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'text'.");
+        }
+
+        const result = await logNaturalEntryAction({
+          text,
+          calories: args?.calories !== undefined ? Number(args.calories) : undefined,
+          protein: args?.protein !== undefined ? Number(args.protein) : undefined,
+          waterLiters: args?.water_liters !== undefined ? Number(args.water_liters) : undefined,
+          walkMinutes: args?.walk_minutes !== undefined ? Number(args.walk_minutes) : undefined,
+          trainingCompleted: args?.training_completed !== undefined ? Boolean(args.training_completed) : undefined,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "delete_logged_entry": {
+        const itemId = String(args?.item_id || "").trim();
+        if (!itemId) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'item_id'.");
+        }
+
+        const result = await deleteLoggedItemAction(itemId);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };

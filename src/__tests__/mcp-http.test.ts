@@ -61,10 +61,12 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
     const data = await res.json();
     expect(data.name).toBe("gym-engine");
     expect(data.status).toBe("online");
-    expect(data.capabilities.tools).toHaveLength(13);
+    expect(data.capabilities.tools).toHaveLength(15);
     expect(data.capabilities.tools).toContain("get_training_plans");
     expect(data.capabilities.tools).toContain("update_training_plans");
     expect(data.capabilities.tools).toContain("get_recommended_plans");
+    expect(data.capabilities.tools).toContain("log_natural_entry");
+    expect(data.capabilities.tools).toContain("delete_logged_entry");
   });
 
   it("handles SSE GET request and emits endpoint handshake event", async () => {

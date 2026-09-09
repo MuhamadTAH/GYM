@@ -10,8 +10,10 @@ import {
   type AthleteDailyGoalsRow,
   type WeeklySplitDay,
   type MonthlyPhase,
+  type LoggedItem,
 } from "@/db/schema";
 import { eq, desc, asc, and, ne, gte } from "drizzle-orm";
+import { parseNaturalTelemetry } from "@/lib/food-parser";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
 import { calculateBrzycki1RM, calculateProgressiveOverload } from "@/lib/math";
@@ -1215,6 +1217,7 @@ export interface DailyGoalsData {
   todayWaterLiters: number;
   todayWalkMinutes: number;
   todayTrainingCompleted: boolean;
+  todayLoggedItems: LoggedItem[];
   weeklyWorkoutsCompleted: number;
   updatedAt?: string;
 }
@@ -1309,6 +1312,7 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
       todayWaterLiters: 0,
       todayWalkMinutes: 0,
       todayTrainingCompleted: false,
+      todayLoggedItems: [],
       weeklyWorkoutsCompleted: completedSessions.length,
     };
   }
@@ -1359,6 +1363,7 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
     todayWaterLiters: row.todayWaterLiters ?? 0,
     todayWalkMinutes: row.todayWalkMinutes ?? 0,
     todayTrainingCompleted: Boolean(row.todayTrainingCompleted),
+    todayLoggedItems: parseJsonField<LoggedItem[]>(row.todayLoggedItems) ?? [],
     weeklyWorkoutsCompleted: completedSessions.length,
     updatedAt: row.updatedAt,
   };
@@ -1544,6 +1549,185 @@ export async function logDailyMetricAction(input: {
 }
 
 /**
+ * Log an entry using natural language (e.g. "4 eggs", "chicken breast with rice", "500ml water", "walked 25 mins").
+ * Supports optional AI macro overrides when invoked via MCP tools.
+ */
+export async function logNaturalEntryAction(input: {
+  text: string;
+  calories?: number;
+  protein?: number;
+  waterLiters?: number;
+  walkMinutes?: number;
+  trainingCompleted?: boolean;
+}): Promise<{
+  success: boolean;
+  message: string;
+  loggedItem?: LoggedItem;
+  goals: DailyGoalsData;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  const rawText = input.text.trim();
+  if (!rawText) {
+    const goals = await getDailyGoalsAction();
+    return { success: false, message: "Input cannot be empty.", goals };
+  }
+
+  // Parse natural telemetry if overrides not fully provided
+  const parsed = parseNaturalTelemetry(rawText);
+
+  // Use AI overrides if explicitly provided, else fallback to parser
+  const calories = input.calories !== undefined ? Number(input.calories) : parsed.totalCalories;
+  const protein = input.protein !== undefined ? Number(input.protein) : parsed.totalProtein;
+  const waterLiters = input.waterLiters !== undefined ? Number(input.waterLiters) : parsed.totalWaterLiters;
+  const walkMinutes = input.walkMinutes !== undefined ? Number(input.walkMinutes) : parsed.totalWalkMinutes;
+  const trainingCompleted = input.trainingCompleted !== undefined ? Boolean(input.trainingCompleted) : parsed.trainingCompleted;
+
+  if (calories === 0 && protein === 0 && waterLiters === 0 && walkMinutes === 0 && !trainingCompleted && !parsed.success) {
+    const goals = await getDailyGoalsAction();
+    return { success: false, message: parsed.feedbackSummary, goals };
+  }
+
+  // Category determination
+  let category: LoggedItem["category"] = "food";
+  if (waterLiters > 0 && calories === 0 && protein === 0) category = "water";
+  else if (walkMinutes > 0 && calories === 0 && protein === 0) category = "walk";
+  else if (trainingCompleted && calories === 0 && protein === 0) category = "training";
+
+  const name = parsed.items.map((i) => i.name).join(" + ") || (category === "food" ? "Food Entry" : category);
+  const summaryParts: string[] = [];
+  if (calories > 0 || protein > 0) summaryParts.push(`+${calories} kcal, +${protein}g protein`);
+  if (waterLiters > 0) summaryParts.push(`+${waterLiters}L water`);
+  if (walkMinutes > 0) summaryParts.push(`+${walkMinutes}m walk`);
+  if (trainingCompleted) summaryParts.push("Workout Done");
+
+  const newItem: LoggedItem = {
+    id: crypto.randomUUID(),
+    timestamp: now,
+    rawText,
+    name,
+    category,
+    calories,
+    protein,
+    waterLiters,
+    walkMinutes,
+    trainingCompleted,
+    summary: `${parsed.items[0]?.summary.split(" ")[0] || "📝"} ${rawText} (${summaryParts.join(" • ")})`,
+  };
+
+  let existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const newId = crypto.randomUUID();
+    await db.insert(athleteDailyGoals).values({
+      id: newId,
+      userId,
+      todayCalories: calories,
+      todayProtein: protein,
+      todayWaterLiters: waterLiters,
+      todayWalkMinutes: walkMinutes,
+      todayTrainingCompleted: trainingCompleted,
+      todayLoggedItems: [newItem],
+      updatedAt: now,
+    });
+  } else {
+    const current = existing[0];
+    let itemsList: LoggedItem[] = [];
+    if (current.todayLoggedItems) {
+      try {
+        itemsList = typeof current.todayLoggedItems === "string"
+          ? JSON.parse(current.todayLoggedItems)
+          : (current.todayLoggedItems as LoggedItem[]);
+      } catch {}
+    }
+
+    const updatedItems = [newItem, ...itemsList];
+
+    await db
+      .update(athleteDailyGoals)
+      .set({
+        todayCalories: Math.max(0, (current.todayCalories ?? 0) + calories),
+        todayProtein: Math.max(0, Math.round(((current.todayProtein ?? 0) + protein) * 10) / 10),
+        todayWaterLiters: Math.max(0, Math.round(((current.todayWaterLiters ?? 0) + waterLiters) * 100) / 100),
+        todayWalkMinutes: Math.max(0, (current.todayWalkMinutes ?? 0) + walkMinutes),
+        todayTrainingCompleted: trainingCompleted ? true : Boolean(current.todayTrainingCompleted),
+        todayLoggedItems: updatedItems,
+        updatedAt: now,
+      })
+      .where(eq(athleteDailyGoals.id, current.id));
+  }
+
+  const updatedGoals = await getDailyGoalsAction();
+  return {
+    success: true,
+    message: `Logged: ${newItem.summary}`,
+    loggedItem: newItem,
+    goals: updatedGoals,
+  };
+}
+
+/**
+ * Delete a specific logged item and revert its calories/protein/water/walk from today's totals.
+ */
+export async function deleteLoggedItemAction(itemId: string): Promise<{ success: boolean; goals: DailyGoalsData }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction();
+    return { success: false, goals };
+  }
+
+  const current = existing[0];
+  let itemsList: LoggedItem[] = [];
+  if (current.todayLoggedItems) {
+    try {
+      itemsList = typeof current.todayLoggedItems === "string"
+        ? JSON.parse(current.todayLoggedItems)
+        : (current.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  const targetItem = itemsList.find((i) => i.id === itemId);
+  if (!targetItem) {
+    const goals = await getDailyGoalsAction();
+    return { success: false, goals };
+  }
+
+  const remainingItems = itemsList.filter((i) => i.id !== itemId);
+  const stillHasTraining = remainingItems.some((i) => i.trainingCompleted);
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: Math.max(0, (current.todayCalories ?? 0) - targetItem.calories),
+      todayProtein: Math.max(0, Math.round(((current.todayProtein ?? 0) - targetItem.protein) * 10) / 10),
+      todayWaterLiters: Math.max(0, Math.round(((current.todayWaterLiters ?? 0) - targetItem.waterLiters) * 100) / 100),
+      todayWalkMinutes: Math.max(0, (current.todayWalkMinutes ?? 0) - targetItem.walkMinutes),
+      todayTrainingCompleted: stillHasTraining,
+      todayLoggedItems: remainingItems,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, current.id));
+
+  const updatedGoals = await getDailyGoalsAction();
+  return { success: true, goals: updatedGoals };
+}
+
+/**
  * Reset today's tracking numbers to zero without altering targets.
  */
 export async function resetDailyTrackingAction(): Promise<{ success: boolean; goals: DailyGoalsData }> {
@@ -1559,6 +1743,7 @@ export async function resetDailyTrackingAction(): Promise<{ success: boolean; go
       todayWaterLiters: 0,
       todayWalkMinutes: 0,
       todayTrainingCompleted: false,
+      todayLoggedItems: [],
       updatedAt: now,
     })
     .where(eq(athleteDailyGoals.userId, userId));

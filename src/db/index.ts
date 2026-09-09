@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	today_water_liters real DEFAULT 0 NOT NULL,
 	today_walk_minutes real DEFAULT 0 NOT NULL,
 	today_training_completed integer DEFAULT false NOT NULL,
+	today_logged_items text,
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
@@ -149,6 +150,7 @@ const columnMigrations = [
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_total_workouts_target integer;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_focus_notes text;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_phases text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN today_logged_items text;",
 ];
 
 // Run SQLite in WAL mode with a busy timeout and ensure schema tables exist
