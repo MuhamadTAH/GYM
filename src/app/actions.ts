@@ -8,6 +8,8 @@ import {
   coachMessages,
   athleteDailyGoals,
   type AthleteDailyGoalsRow,
+  type WeeklySplitDay,
+  type MonthlyPhase,
 } from "@/db/schema";
 import { eq, desc, asc, and, ne, gte } from "drizzle-orm";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
@@ -1192,6 +1194,22 @@ export interface DailyGoalsData {
   dailyWalkNotes: string | null;
   trainingDaysPerWeek: number | null;
   trainingNotes: string | null;
+
+  // Weekly Planning
+  weeklyWorkoutsTarget: number | null;
+  weeklyWalkMinutesTarget: number | null;
+  weeklyCalorieDeficitTarget: number | null;
+  weeklyFocusNotes: string | null;
+  weeklySplitSchedule: WeeklySplitDay[] | null;
+
+  // Monthly Planning (4-Week Mesocycle Block)
+  monthlyMesocycleName: string | null;
+  monthlyPrimaryGoal: string | null;
+  monthlyWeightLossTargetKg: number | null;
+  monthlyTotalWorkoutsTarget: number | null;
+  monthlyFocusNotes: string | null;
+  monthlyPhases: MonthlyPhase[] | null;
+
   todayCalories: number;
   todayProtein: number;
   todayWaterLiters: number;
@@ -1215,10 +1233,25 @@ export interface SaveDailyGoalsInput {
   dailyWalkNotes?: string | null;
   trainingDaysPerWeek?: number | null;
   trainingNotes?: string | null;
+
+  // Weekly Planning
+  weeklyWorkoutsTarget?: number | null;
+  weeklyWalkMinutesTarget?: number | null;
+  weeklyCalorieDeficitTarget?: number | null;
+  weeklyFocusNotes?: string | null;
+  weeklySplitSchedule?: WeeklySplitDay[] | null;
+
+  // Monthly Planning
+  monthlyMesocycleName?: string | null;
+  monthlyPrimaryGoal?: string | null;
+  monthlyWeightLossTargetKg?: number | null;
+  monthlyTotalWorkoutsTarget?: number | null;
+  monthlyFocusNotes?: string | null;
+  monthlyPhases?: MonthlyPhase[] | null;
 }
 
 /**
- * Retrieve the athlete's current custom daily goals and today's tracking status.
+ * Retrieve the athlete's current custom daily goals, weekly plan, and monthly mesocycle.
  * Starts completely un-prefilled (all targets null) if not previously configured.
  */
 export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
@@ -1260,6 +1293,17 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
       dailyWalkNotes: null,
       trainingDaysPerWeek: null,
       trainingNotes: null,
+      weeklyWorkoutsTarget: null,
+      weeklyWalkMinutesTarget: null,
+      weeklyCalorieDeficitTarget: null,
+      weeklyFocusNotes: null,
+      weeklySplitSchedule: null,
+      monthlyMesocycleName: null,
+      monthlyPrimaryGoal: null,
+      monthlyWeightLossTargetKg: null,
+      monthlyTotalWorkoutsTarget: null,
+      monthlyFocusNotes: null,
+      monthlyPhases: null,
       todayCalories: 0,
       todayProtein: 0,
       todayWaterLiters: 0,
@@ -1270,6 +1314,19 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
   }
 
   const row = existing[0];
+
+  const parseJsonField = <T>(val: any): T | null => {
+    if (!val) return null;
+    if (typeof val === "string") {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return null;
+      }
+    }
+    return val as T;
+  };
+
   return {
     id: row.id,
     userId: row.userId,
@@ -1286,6 +1343,17 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
     dailyWalkNotes: row.dailyWalkNotes,
     trainingDaysPerWeek: row.trainingDaysPerWeek,
     trainingNotes: row.trainingNotes,
+    weeklyWorkoutsTarget: row.weeklyWorkoutsTarget,
+    weeklyWalkMinutesTarget: row.weeklyWalkMinutesTarget,
+    weeklyCalorieDeficitTarget: row.weeklyCalorieDeficitTarget,
+    weeklyFocusNotes: row.weeklyFocusNotes,
+    weeklySplitSchedule: parseJsonField<WeeklySplitDay[]>(row.weeklySplitSchedule),
+    monthlyMesocycleName: row.monthlyMesocycleName,
+    monthlyPrimaryGoal: row.monthlyPrimaryGoal,
+    monthlyWeightLossTargetKg: row.monthlyWeightLossTargetKg,
+    monthlyTotalWorkoutsTarget: row.monthlyTotalWorkoutsTarget,
+    monthlyFocusNotes: row.monthlyFocusNotes,
+    monthlyPhases: parseJsonField<MonthlyPhase[]>(row.monthlyPhases),
     todayCalories: row.todayCalories ?? 0,
     todayProtein: row.todayProtein ?? 0,
     todayWaterLiters: row.todayWaterLiters ?? 0,
@@ -1297,7 +1365,7 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
 }
 
 /**
- * Save or update the athlete's custom goals & strategy notes.
+ * Save or update the athlete's custom goals & strategy notes (Daily, Weekly, and Monthly).
  */
 export async function saveDailyGoalsAction(
   input: SaveDailyGoalsInput
@@ -1318,22 +1386,50 @@ export async function saveDailyGoalsAction(
     return s.length > 0 ? s : null;
   };
 
-  const dataToSave = {
-    caloriesTarget: parseNumOrNull(input.caloriesTarget),
-    caloriesNotes: parseStrOrNull(input.caloriesNotes),
-    proteinMinGrams: parseNumOrNull(input.proteinMinGrams),
-    proteinMaxGrams: parseNumOrNull(input.proteinMaxGrams),
-    proteinNotes: parseStrOrNull(input.proteinNotes),
-    waterMinLiters: parseNumOrNull(input.waterMinLiters),
-    waterMaxLiters: parseNumOrNull(input.waterMaxLiters),
-    waterNotes: parseStrOrNull(input.waterNotes),
-    dailyWalkMinMinutes: parseNumOrNull(input.dailyWalkMinMinutes),
-    dailyWalkMaxMinutes: parseNumOrNull(input.dailyWalkMaxMinutes),
-    dailyWalkNotes: parseStrOrNull(input.dailyWalkNotes),
-    trainingDaysPerWeek: parseNumOrNull(input.trainingDaysPerWeek),
-    trainingNotes: parseStrOrNull(input.trainingNotes),
+  const parseJsonOrNull = <T>(val: any): T | null => {
+    if (val === null || val === undefined) return null;
+    if (typeof val === "string") {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return null;
+      }
+    }
+    return val;
+  };
+
+  const dataToSave: any = {
     updatedAt: now,
   };
+
+  if (input.caloriesTarget !== undefined) dataToSave.caloriesTarget = parseNumOrNull(input.caloriesTarget);
+  if (input.caloriesNotes !== undefined) dataToSave.caloriesNotes = parseStrOrNull(input.caloriesNotes);
+  if (input.proteinMinGrams !== undefined) dataToSave.proteinMinGrams = parseNumOrNull(input.proteinMinGrams);
+  if (input.proteinMaxGrams !== undefined) dataToSave.proteinMaxGrams = parseNumOrNull(input.proteinMaxGrams);
+  if (input.proteinNotes !== undefined) dataToSave.proteinNotes = parseStrOrNull(input.proteinNotes);
+  if (input.waterMinLiters !== undefined) dataToSave.waterMinLiters = parseNumOrNull(input.waterMinLiters);
+  if (input.waterMaxLiters !== undefined) dataToSave.waterMaxLiters = parseNumOrNull(input.waterMaxLiters);
+  if (input.waterNotes !== undefined) dataToSave.waterNotes = parseStrOrNull(input.waterNotes);
+  if (input.dailyWalkMinMinutes !== undefined) dataToSave.dailyWalkMinMinutes = parseNumOrNull(input.dailyWalkMinMinutes);
+  if (input.dailyWalkMaxMinutes !== undefined) dataToSave.dailyWalkMaxMinutes = parseNumOrNull(input.dailyWalkMaxMinutes);
+  if (input.dailyWalkNotes !== undefined) dataToSave.dailyWalkNotes = parseStrOrNull(input.dailyWalkNotes);
+  if (input.trainingDaysPerWeek !== undefined) dataToSave.trainingDaysPerWeek = parseNumOrNull(input.trainingDaysPerWeek);
+  if (input.trainingNotes !== undefined) dataToSave.trainingNotes = parseStrOrNull(input.trainingNotes);
+
+  // Weekly Planning fields
+  if (input.weeklyWorkoutsTarget !== undefined) dataToSave.weeklyWorkoutsTarget = parseNumOrNull(input.weeklyWorkoutsTarget);
+  if (input.weeklyWalkMinutesTarget !== undefined) dataToSave.weeklyWalkMinutesTarget = parseNumOrNull(input.weeklyWalkMinutesTarget);
+  if (input.weeklyCalorieDeficitTarget !== undefined) dataToSave.weeklyCalorieDeficitTarget = parseNumOrNull(input.weeklyCalorieDeficitTarget);
+  if (input.weeklyFocusNotes !== undefined) dataToSave.weeklyFocusNotes = parseStrOrNull(input.weeklyFocusNotes);
+  if (input.weeklySplitSchedule !== undefined) dataToSave.weeklySplitSchedule = parseJsonOrNull(input.weeklySplitSchedule);
+
+  // Monthly Planning fields
+  if (input.monthlyMesocycleName !== undefined) dataToSave.monthlyMesocycleName = parseStrOrNull(input.monthlyMesocycleName);
+  if (input.monthlyPrimaryGoal !== undefined) dataToSave.monthlyPrimaryGoal = parseStrOrNull(input.monthlyPrimaryGoal);
+  if (input.monthlyWeightLossTargetKg !== undefined) dataToSave.monthlyWeightLossTargetKg = parseNumOrNull(input.monthlyWeightLossTargetKg);
+  if (input.monthlyTotalWorkoutsTarget !== undefined) dataToSave.monthlyTotalWorkoutsTarget = parseNumOrNull(input.monthlyTotalWorkoutsTarget);
+  if (input.monthlyFocusNotes !== undefined) dataToSave.monthlyFocusNotes = parseStrOrNull(input.monthlyFocusNotes);
+  if (input.monthlyPhases !== undefined) dataToSave.monthlyPhases = parseJsonOrNull(input.monthlyPhases);
 
   const existing = await db
     .select()
@@ -1484,6 +1580,120 @@ export async function clearAllGoalsAction(): Promise<{ success: boolean; goals: 
 
   const updatedGoals = await getDailyGoalsAction();
   return { success: true, goals: updatedGoals };
+}
+
+/**
+ * Returns a recommended, science-backed 5-Day Weekly Split template
+ */
+export async function getRecommendedWeeklyPlanAction(): Promise<{
+  weeklyWorkoutsTarget: number;
+  weeklyWalkMinutesTarget: number;
+  weeklyCalorieDeficitTarget: number;
+  weeklyFocusNotes: string;
+  weeklySplitSchedule: WeeklySplitDay[];
+}> {
+  return {
+    weeklyWorkoutsTarget: 5,
+    weeklyWalkMinutesTarget: 175,
+    weeklyCalorieDeficitTarget: 3150,
+    weeklyFocusNotes:
+      "Double progression protocol: complete prescribed reps with flawless form; stop all sets strictly at technical breakdown; zero knee/back pain.",
+    weeklySplitSchedule: [
+      {
+        day: "Mon",
+        title: "Push (Chest / Anterior Delts / Triceps)",
+        focus: "Heavy Flat Bench Press 3x5, Standing OHP 3x8, Incline DB Press, Lateral Raises",
+        isRest: false,
+      },
+      {
+        day: "Tue",
+        title: "Pull (Back / Biceps / Rear Delts)",
+        focus: "Barbell Pendlay Row 3x6, Pull-Ups 3x8, Chest-Supported Row, Face Pulls, Hammer Curls",
+        isRest: false,
+      },
+      {
+        day: "Wed",
+        title: "Active Recovery & Metabolic Walk",
+        focus: "35-minute outdoor brisk walk (NEAT), thoracic spine mobility, hip opening, zero axial loading",
+        isRest: true,
+      },
+      {
+        day: "Thu",
+        title: "Legs (Quad Dominant & Calves)",
+        focus: "Barbell Back Squat 3x6, Romanian Deadlift 3x8, Leg Press, Standing Calf Raises",
+        isRest: false,
+      },
+      {
+        day: "Fri",
+        title: "Upper Body Hypertrophy & Arms",
+        focus: "Incline Barbell Bench 3x8, Neutral Lat Pulldown 3x10, Dips, Incline DB Curls, Tricep Pushdowns",
+        isRest: false,
+      },
+      {
+        day: "Sat",
+        title: "Posterior Chain & Conditioning",
+        focus: "Conventional/Trap Bar Deadlift 3x5, Walking Lunges, Hanging Leg Raises, 30m Zone 2 Walk",
+        isRest: false,
+      },
+      {
+        day: "Sun",
+        title: "Full Rest & Systemic Recovery",
+        focus: "Complete physiological reset, sleep optimization (8+ hrs), hydration & family meals",
+        isRest: true,
+      },
+    ],
+  };
+}
+
+/**
+ * Returns a recommended 4-Week Progressive Overload Mesocycle Block roadmap
+ */
+export async function getRecommendedMonthlyPlanAction(): Promise<{
+  monthlyMesocycleName: string;
+  monthlyPrimaryGoal: string;
+  monthlyWeightLossTargetKg: number;
+  monthlyTotalWorkoutsTarget: number;
+  monthlyFocusNotes: string;
+  monthlyPhases: MonthlyPhase[];
+}> {
+  return {
+    monthlyMesocycleName: "4-Week Autoregulated Progressive Overload Block",
+    monthlyPrimaryGoal: "Recomposition / Hypertrophy + Fat-Loss Deficit",
+    monthlyWeightLossTargetKg: 1.8,
+    monthlyTotalWorkoutsTarget: 20,
+    monthlyFocusNotes:
+      "Maintain ~450 kcal deficit with high protein (1.6-2.2g/kg). Progressive micro-loading on compound lifts with a non-negotiable deload in Week 4 to prevent tendon fatigue.",
+    monthlyPhases: [
+      {
+        weekNumber: 1,
+        phaseName: "Week 1: Accumulation & Calibration",
+        intensityRpe: "RPE 7.0 - 7.5",
+        volumeDescription: "3 working sets/exercise @ baseline load (70% 1RM)",
+        focusNotes: "Establish baseline loads; focus on 2-second eccentric control and zero momentum.",
+      },
+      {
+        weekNumber: 2,
+        phaseName: "Week 2: Progressive Overload",
+        intensityRpe: "RPE 8.0 - 8.5",
+        volumeDescription: "+2.5kg or +1 rep per set across all working movements",
+        focusNotes: "Apply autoregulated overload. Log all sets using shorthand bar.",
+      },
+      {
+        weekNumber: 3,
+        phaseName: "Week 3: Peak Intensity & Overreach",
+        intensityRpe: "RPE 9.0 - 9.5",
+        volumeDescription: "High mechanical tension; push each set to genuine technical failure",
+        focusNotes: "Maximal stimulus before deload. Stop set immediately if form breakdown occurs.",
+      },
+      {
+        weekNumber: 4,
+        phaseName: "Week 4: Active Deload & Fatigue Dissipation",
+        intensityRpe: "RPE 6.0 - 6.5",
+        volumeDescription: "Cut sets by 50% (2 sets/exercise) at 60% baseline load",
+        focusNotes: "Dissipate joint stress and central nervous system fatigue to prepare for next block.",
+      },
+    ],
+  };
 }
 
 

@@ -23,9 +23,23 @@ import {
   postChatReplyAction,
   getDailyGoalsAction,
   saveDailyGoalsAction,
+  getRecommendedWeeklyPlanAction,
+  getRecommendedMonthlyPlanAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
+import type { WeeklySplitDay, MonthlyPhase } from "@/db/schema";
+
+function parseJsonArray<T>(val: unknown): T[] | undefined {
+  if (Array.isArray(val)) return val as T[];
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed as T[];
+    } catch {}
+  }
+  return undefined;
+}
 
 /**
  * MANDATORY LOGGING RULE:
@@ -79,9 +93,9 @@ export function registerHandlers(server: Server) {
       },
       {
         uri: "gym://goals",
-        name: "Athlete Daily Goals & Strategy",
+        name: "Athlete Daily Goals, Weekly Split & Monthly Mesocycle",
         description:
-          "Returns the athlete's configured daily targets for Calories, Protein, Water, Daily Walk, and Training Adherence, along with today's logged status.",
+          "Returns the athlete's configured daily targets (Calories, Protein, Water, Daily Walk, Training Adherence), 7-day weekly split schedule, and 4-week monthly mesocycle roadmap, along with today's logged status.",
         mimeType: "application/json",
       },
     ],
@@ -368,7 +382,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "get_daily_goals",
         description:
-          "Fetch the athlete's configured targets and strategic notes for calories, protein, hydration, walk, and training adherence, along with today's logged intake.",
+          "Fetch the athlete's complete targets and roadmap: daily habits (calories, protein, hydration, walk, training adherence), 7-day weekly split schedule, and 4-week monthly progressive overload mesocycle, along with today's logged intake.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -377,7 +391,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "update_daily_goals",
         description:
-          "Update the athlete's custom daily targets and notes for calories, protein, water, walk, or training adherence.",
+          "Update the athlete's custom daily targets, weekly split schedule, or monthly mesocycle block roadmap.",
         inputSchema: {
           type: "object",
           properties: {
@@ -394,6 +408,119 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             daily_walk_notes: { type: "string", description: "Metabolic rate / NEAT walking notes." },
             training_days_per_week: { type: "integer", description: "Target workout days per week." },
             training_notes: { type: "string", description: "Technical execution and pain-free discipline standards." },
+            weekly_workouts_target: { type: "integer", description: "Weekly target workout count (e.g. 5)." },
+            weekly_walk_minutes_target: { type: "integer", description: "Weekly total walk minutes target (e.g. 175)." },
+            weekly_calorie_deficit_target: { type: "integer", description: "Weekly cumulative calorie deficit target (e.g. 3150 kcal)." },
+            weekly_focus_notes: { type: "string", description: "Weekly split strategy & execution notes." },
+            weekly_split_schedule: {
+              type: "array",
+              description: "Array of 7 day schedule objects: [{ day: 'Mon', title: 'Push', focus: 'Bench...', isRest: false, targetMinutes: 60 }]",
+              items: {
+                type: "object",
+                properties: {
+                  day: { type: "string" },
+                  title: { type: "string" },
+                  focus: { type: "string" },
+                  isRest: { type: "boolean" },
+                  targetMinutes: { type: "number" },
+                },
+                required: ["day", "focus", "isRest"],
+              },
+            },
+            monthly_mesocycle_name: { type: "string", description: "Name of the 4-week mesocycle block (e.g. '4-Week Progressive Overload Block')." },
+            monthly_primary_goal: { type: "string", description: "Primary mesocycle goal (e.g. 'Hypertrophy & Fat-Loss Deficit')." },
+            monthly_weight_loss_target_kg: { type: "number", description: "Target weight loss over the 4-week block in kg (e.g. 1.8)." },
+            monthly_total_workouts_target: { type: "integer", description: "Total target workouts in the mesocycle (e.g. 20)." },
+            monthly_focus_notes: { type: "string", description: "Strategic focus notes for the mesocycle block." },
+            monthly_phases: {
+              type: "array",
+              description: "Array of weekly phases: [{ weekNumber: 1, phaseName: 'Week 1: Accumulation', intensityRpe: 'RPE 7-7.5', volumeDescription: '...', focusNotes: '...' }]",
+              items: {
+                type: "object",
+                properties: {
+                  weekNumber: { type: "integer" },
+                  phaseName: { type: "string" },
+                  intensityRpe: { type: "string" },
+                  volumeDescription: { type: "string" },
+                  focusNotes: { type: "string" },
+                },
+                required: ["weekNumber", "phaseName"],
+              },
+            },
+          },
+        },
+      },
+      {
+        name: "get_training_plans",
+        description:
+          "Retrieve the athlete's 7-day weekly split schedule and 4-week monthly mesocycle block progression roadmap.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "update_training_plans",
+        description:
+          "Update the athlete's weekly split schedule (7 days) and/or monthly 4-week mesocycle block roadmap.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            weekly_workouts_target: { type: "integer", description: "Weekly target workout count (e.g. 5)." },
+            weekly_walk_minutes_target: { type: "integer", description: "Weekly total walk minutes target (e.g. 175)." },
+            weekly_calorie_deficit_target: { type: "integer", description: "Weekly cumulative calorie deficit target (e.g. 3150 kcal)." },
+            weekly_focus_notes: { type: "string", description: "Weekly split strategy & execution notes." },
+            weekly_split_schedule: {
+              type: "array",
+              description: "Array of 7 day schedule objects: [{ day: 'Mon', title: 'Push', focus: 'Bench...', isRest: false, targetMinutes: 60 }]",
+              items: {
+                type: "object",
+                properties: {
+                  day: { type: "string" },
+                  title: { type: "string" },
+                  focus: { type: "string" },
+                  isRest: { type: "boolean" },
+                  targetMinutes: { type: "number" },
+                },
+                required: ["day", "focus", "isRest"],
+              },
+            },
+            monthly_mesocycle_name: { type: "string", description: "Name of the 4-week mesocycle block (e.g. '4-Week Progressive Overload Block')." },
+            monthly_primary_goal: { type: "string", description: "Primary mesocycle goal (e.g. 'Hypertrophy & Fat-Loss Deficit')." },
+            monthly_weight_loss_target_kg: { type: "number", description: "Target weight loss over the 4-week block in kg (e.g. 1.8)." },
+            monthly_total_workouts_target: { type: "integer", description: "Total target workouts in the mesocycle (e.g. 20)." },
+            monthly_focus_notes: { type: "string", description: "Strategic focus notes for the mesocycle block." },
+            monthly_phases: {
+              type: "array",
+              description: "Array of weekly phases: [{ weekNumber: 1, phaseName: 'Week 1: Accumulation', intensityRpe: 'RPE 7-7.5', volumeDescription: '...', focusNotes: '...' }]",
+              items: {
+                type: "object",
+                properties: {
+                  weekNumber: { type: "integer" },
+                  phaseName: { type: "string" },
+                  intensityRpe: { type: "string" },
+                  volumeDescription: { type: "string" },
+                  focusNotes: { type: "string" },
+                },
+                required: ["weekNumber", "phaseName"],
+              },
+            },
+          },
+        },
+      },
+      {
+        name: "get_recommended_plans",
+        description:
+          "Retrieve evidence-based recommended templates for weekly 5-day training split schedule and/or 4-week progressive overload mesocycle roadmap.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            plan_type: {
+              type: "string",
+              enum: ["weekly", "monthly", "both"],
+              description: "Type of recommended plan template to retrieve: 'weekly', 'monthly', or 'both'. Defaults to 'both'.",
+              default: "both",
+            },
           },
         },
       },
@@ -649,6 +776,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "update_daily_goals": {
+        const weeklySplit = parseJsonArray<WeeklySplitDay>(args?.weekly_split_schedule);
+        const monthlyPhases = parseJsonArray<MonthlyPhase>(args?.monthly_phases);
+
         const result = await saveDailyGoalsAction({
           caloriesTarget: args?.calories_target !== undefined ? Number(args.calories_target) : undefined,
           caloriesNotes: args?.calories_notes !== undefined ? String(args.calories_notes) : undefined,
@@ -663,6 +793,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           dailyWalkNotes: args?.daily_walk_notes !== undefined ? String(args.daily_walk_notes) : undefined,
           trainingDaysPerWeek: args?.training_days_per_week !== undefined ? Number(args.training_days_per_week) : undefined,
           trainingNotes: args?.training_notes !== undefined ? String(args.training_notes) : undefined,
+          weeklyWorkoutsTarget: args?.weekly_workouts_target !== undefined ? Number(args.weekly_workouts_target) : undefined,
+          weeklyWalkMinutesTarget: args?.weekly_walk_minutes_target !== undefined ? Number(args.weekly_walk_minutes_target) : undefined,
+          weeklyCalorieDeficitTarget: args?.weekly_calorie_deficit_target !== undefined ? Number(args.weekly_calorie_deficit_target) : undefined,
+          weeklyFocusNotes: args?.weekly_focus_notes !== undefined ? String(args.weekly_focus_notes) : undefined,
+          weeklySplitSchedule: weeklySplit,
+          monthlyMesocycleName: args?.monthly_mesocycle_name !== undefined ? String(args.monthly_mesocycle_name) : undefined,
+          monthlyPrimaryGoal: args?.monthly_primary_goal !== undefined ? String(args.monthly_primary_goal) : undefined,
+          monthlyWeightLossTargetKg: args?.monthly_weight_loss_target_kg !== undefined ? Number(args.monthly_weight_loss_target_kg) : undefined,
+          monthlyTotalWorkoutsTarget: args?.monthly_total_workouts_target !== undefined ? Number(args.monthly_total_workouts_target) : undefined,
+          monthlyFocusNotes: args?.monthly_focus_notes !== undefined ? String(args.monthly_focus_notes) : undefined,
+          monthlyPhases: monthlyPhases,
         });
 
         return {
@@ -670,6 +811,86 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: "text",
               text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_training_plans": {
+        const goals = await getDailyGoalsAction();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  weeklyPlan: {
+                    weeklyWorkoutsTarget: goals.weeklyWorkoutsTarget,
+                    weeklyWalkMinutesTarget: goals.weeklyWalkMinutesTarget,
+                    weeklyCalorieDeficitTarget: goals.weeklyCalorieDeficitTarget,
+                    weeklyFocusNotes: goals.weeklyFocusNotes,
+                    weeklySplitSchedule: goals.weeklySplitSchedule,
+                  },
+                  monthlyMesocycle: {
+                    monthlyMesocycleName: goals.monthlyMesocycleName,
+                    monthlyPrimaryGoal: goals.monthlyPrimaryGoal,
+                    monthlyWeightLossTargetKg: goals.monthlyWeightLossTargetKg,
+                    monthlyTotalWorkoutsTarget: goals.monthlyTotalWorkoutsTarget,
+                    monthlyFocusNotes: goals.monthlyFocusNotes,
+                    monthlyPhases: goals.monthlyPhases,
+                  },
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "update_training_plans": {
+        const weeklySplit = parseJsonArray<WeeklySplitDay>(args?.weekly_split_schedule);
+        const monthlyPhases = parseJsonArray<MonthlyPhase>(args?.monthly_phases);
+
+        const result = await saveDailyGoalsAction({
+          weeklyWorkoutsTarget: args?.weekly_workouts_target !== undefined ? Number(args.weekly_workouts_target) : undefined,
+          weeklyWalkMinutesTarget: args?.weekly_walk_minutes_target !== undefined ? Number(args.weekly_walk_minutes_target) : undefined,
+          weeklyCalorieDeficitTarget: args?.weekly_calorie_deficit_target !== undefined ? Number(args.weekly_calorie_deficit_target) : undefined,
+          weeklyFocusNotes: args?.weekly_focus_notes !== undefined ? String(args.weekly_focus_notes) : undefined,
+          weeklySplitSchedule: weeklySplit,
+          monthlyMesocycleName: args?.monthly_mesocycle_name !== undefined ? String(args.monthly_mesocycle_name) : undefined,
+          monthlyPrimaryGoal: args?.monthly_primary_goal !== undefined ? String(args.monthly_primary_goal) : undefined,
+          monthlyWeightLossTargetKg: args?.monthly_weight_loss_target_kg !== undefined ? Number(args.monthly_weight_loss_target_kg) : undefined,
+          monthlyTotalWorkoutsTarget: args?.monthly_total_workouts_target !== undefined ? Number(args.monthly_total_workouts_target) : undefined,
+          monthlyFocusNotes: args?.monthly_focus_notes !== undefined ? String(args.monthly_focus_notes) : undefined,
+          monthlyPhases: monthlyPhases,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_recommended_plans": {
+        const planType = String(args?.plan_type || "both").toLowerCase();
+        let weekly = null;
+        let monthly = null;
+        if (planType === "weekly" || planType === "both") {
+          weekly = await getRecommendedWeeklyPlanAction();
+        }
+        if (planType === "monthly" || planType === "both") {
+          monthly = await getRecommendedMonthlyPlanAction();
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ weekly, monthly }, null, 2),
             },
           ],
         };

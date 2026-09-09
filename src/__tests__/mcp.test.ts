@@ -107,9 +107,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(goals.userId).toBeDefined();
   });
 
-  it("lists all 10 action & state mutation tools", async () => {
+  it("lists all 13 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(10);
+    expect(res.tools).toHaveLength(13);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -122,15 +122,25 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("post_chat_reply");
     expect(toolNames).toContain("get_daily_goals");
     expect(toolNames).toContain("update_daily_goals");
+    expect(toolNames).toContain("get_training_plans");
+    expect(toolNames).toContain("update_training_plans");
+    expect(toolNames).toContain("get_recommended_plans");
   });
 
-  it("calls update_daily_goals and get_daily_goals tools", async () => {
+  it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
     const updateRes = await client.callTool({
       name: "update_daily_goals",
       arguments: {
         calories_target: 1900,
         calories_notes: "fat loss deficit",
         protein_min_grams: 65,
+        weekly_workouts_target: 5,
+        weekly_split_schedule: [
+          { day: "Mon", title: "Push", focus: "Chest & Shoulders", isRest: false },
+          { day: "Tue", title: "Pull", focus: "Back & Biceps", isRest: false },
+        ],
+        monthly_mesocycle_name: "Block 1",
+        monthly_weight_loss_target_kg: 1.5,
       },
     });
     expect(updateRes.isError).toBeFalsy();
@@ -143,6 +153,44 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     const payload = JSON.parse(((getRes as any).content[0] as { text: string }).text);
     expect(payload.caloriesTarget).toBe(1900);
     expect(payload.proteinMinGrams).toBe(65);
+    expect(payload.weeklyWorkoutsTarget).toBe(5);
+    expect(payload.weeklySplitSchedule).toHaveLength(2);
+    expect(payload.monthlyMesocycleName).toBe("Block 1");
+    expect(payload.monthlyWeightLossTargetKg).toBe(1.5);
+  });
+
+  it("calls get_training_plans, update_training_plans, and get_recommended_plans tools", async () => {
+    // 1. Test get_recommended_plans
+    const recRes = await client.callTool({
+      name: "get_recommended_plans",
+      arguments: { plan_type: "both" },
+    });
+    expect(recRes.isError).toBeFalsy();
+    const recPayload = JSON.parse(((recRes as any).content[0] as { text: string }).text);
+    expect(recPayload.weekly.weeklyWorkoutsTarget).toBe(5);
+    expect(recPayload.monthly.monthlyMesocycleName).toBeDefined();
+
+    // 2. Test update_training_plans
+    const updatePlanRes = await client.callTool({
+      name: "update_training_plans",
+      arguments: {
+        weekly_workouts_target: 4,
+        weekly_walk_minutes_target: 160,
+        monthly_mesocycle_name: "Strength Peaking Block",
+      },
+    });
+    expect(updatePlanRes.isError).toBeFalsy();
+
+    // 3. Test get_training_plans
+    const getPlanRes = await client.callTool({
+      name: "get_training_plans",
+      arguments: {},
+    });
+    expect(getPlanRes.isError).toBeFalsy();
+    const planPayload = JSON.parse(((getPlanRes as any).content[0] as { text: string }).text);
+    expect(planPayload.weeklyPlan.weeklyWorkoutsTarget).toBe(4);
+    expect(planPayload.weeklyPlan.weeklyWalkMinutesTarget).toBe(160);
+    expect(planPayload.monthlyMesocycle.monthlyMesocycleName).toBe("Strength Peaking Block");
   });
 
   it("calls calculate_nutrition tool deterministically", async () => {

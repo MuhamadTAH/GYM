@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	daily_walk_notes text,
 	training_days_per_week integer,
 	training_notes text,
+	weekly_workouts_target integer,
+	weekly_walk_minutes_target integer,
+	weekly_calorie_deficit_target integer,
+	weekly_focus_notes text,
+	weekly_split_schedule text,
+	monthly_mesocycle_name text,
+	monthly_primary_goal text,
+	monthly_weight_loss_target_kg real,
+	monthly_total_workouts_target integer,
+	monthly_focus_notes text,
+	monthly_phases text,
 	today_calories real DEFAULT 0 NOT NULL,
 	today_protein real DEFAULT 0 NOT NULL,
 	today_water_liters real DEFAULT 0 NOT NULL,
@@ -126,6 +137,20 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 );
 `;
 
+const columnMigrations = [
+  "ALTER TABLE athlete_daily_goals ADD COLUMN weekly_workouts_target integer;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN weekly_walk_minutes_target integer;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN weekly_calorie_deficit_target integer;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN weekly_focus_notes text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN weekly_split_schedule text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_mesocycle_name text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_primary_goal text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_weight_loss_target_kg real;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_total_workouts_target integer;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_focus_notes text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_phases text;",
+];
+
 // Run SQLite in WAL mode with a busy timeout and ensure schema tables exist
 if (!globalThis.client) {
   client.execute("PRAGMA journal_mode = WAL;").catch((err) => {
@@ -134,9 +159,17 @@ if (!globalThis.client) {
   client.execute("PRAGMA busy_timeout = 5000;").catch((err) => {
     console.error("[DB] Failed to set busy_timeout:", err);
   });
-  client.executeMultiple(schemaDdl).catch((err) => {
-    console.error("[DB] Failed to ensure tables exist:", err);
-  });
+  client
+    .executeMultiple(schemaDdl)
+    .then(() => {
+      // Execute column migrations safely for existing databases
+      for (const m of columnMigrations) {
+        client.execute(m).catch(() => {});
+      }
+    })
+    .catch((err) => {
+      console.error("[DB] Failed to ensure tables exist:", err);
+    });
 }
 
 if (process.env.NODE_ENV !== "production") {

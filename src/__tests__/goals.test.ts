@@ -5,6 +5,8 @@ import {
   logDailyMetricAction,
   resetDailyTrackingAction,
   clearAllGoalsAction,
+  getRecommendedWeeklyPlanAction,
+  getRecommendedMonthlyPlanAction,
 } from "../app/actions";
 
 describe("Athlete Daily Goals & Habits Engine", () => {
@@ -27,6 +29,10 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(goals.dailyWalkNotes).toBeNull();
     expect(goals.trainingDaysPerWeek).toBeNull();
     expect(goals.trainingNotes).toBeNull();
+    expect(goals.weeklyWorkoutsTarget).toBeNull();
+    expect(goals.weeklySplitSchedule).toBeNull();
+    expect(goals.monthlyMesocycleName).toBeNull();
+    expect(goals.monthlyPhases).toBeNull();
     expect(goals.todayCalories).toBe(0);
     expect(goals.todayProtein).toBe(0);
     expect(goals.todayWaterLiters).toBe(0);
@@ -34,7 +40,7 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(goals.todayTrainingCompleted).toBe(false);
   });
 
-  it("saves custom athlete goals and strategic notes accurately", async () => {
+  it("saves custom athlete goals, weekly split schedule, and monthly mesocycle block", async () => {
     const res = await saveDailyGoalsAction({
       caloriesTarget: 1900,
       caloriesNotes: "maintains your fat-loss deficit",
@@ -50,6 +56,24 @@ describe("Athlete Daily Goals & Habits Engine", () => {
       trainingDaysPerWeek: 5,
       trainingNotes:
         "Complete prescribed session, stopping all sets at technical failure (zero swinging, zero knee/back pain)",
+      weeklyWorkoutsTarget: 5,
+      weeklyWalkMinutesTarget: 175,
+      weeklyCalorieDeficitTarget: 3150,
+      weeklyFocusNotes: "Push Pull Legs split with 2 rest days",
+      weeklySplitSchedule: [
+        { day: "Mon", title: "Push", focus: "Bench & OHP", isRest: false, targetMinutes: 60 },
+        { day: "Tue", title: "Pull", focus: "Rows & Pullups", isRest: false, targetMinutes: 60 },
+        { day: "Wed", title: "Rest", focus: "Walk & Mobility", isRest: true },
+      ],
+      monthlyMesocycleName: "4-Week Recomp Overload Block",
+      monthlyPrimaryGoal: "Hypertrophy + Fat Loss",
+      monthlyWeightLossTargetKg: 2.0,
+      monthlyTotalWorkoutsTarget: 20,
+      monthlyFocusNotes: "Progressive overload with Week 4 deload",
+      monthlyPhases: [
+        { weekNumber: 1, phaseName: "Week 1: Baseline", intensityRpe: "RPE 7", volumeDescription: "3 sets", focusNotes: "Calibrate loads" },
+        { weekNumber: 4, phaseName: "Week 4: Deload", intensityRpe: "RPE 6", volumeDescription: "2 sets", focusNotes: "Dissipate fatigue" },
+      ],
     });
 
     expect(res.success).toBe(true);
@@ -65,6 +89,20 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(res.goals.dailyWalkNotes).toBe("keeps metabolic rate active outside the gym");
     expect(res.goals.trainingDaysPerWeek).toBe(5);
     expect(res.goals.trainingNotes).toContain("stopping all sets at technical failure");
+
+    // Weekly verification
+    expect(res.goals.weeklyWorkoutsTarget).toBe(5);
+    expect(res.goals.weeklyWalkMinutesTarget).toBe(175);
+    expect(res.goals.weeklyCalorieDeficitTarget).toBe(3150);
+    expect(res.goals.weeklySplitSchedule).toHaveLength(3);
+    expect(res.goals.weeklySplitSchedule?.[0].title).toBe("Push");
+    expect(res.goals.weeklySplitSchedule?.[2].isRest).toBe(true);
+
+    // Monthly verification
+    expect(res.goals.monthlyMesocycleName).toBe("4-Week Recomp Overload Block");
+    expect(res.goals.monthlyWeightLossTargetKg).toBe(2.0);
+    expect(res.goals.monthlyPhases).toHaveLength(2);
+    expect(res.goals.monthlyPhases?.[1].phaseName).toBe("Week 4: Deload");
   });
 
   it("logs and increments today's metrics dynamically", async () => {
@@ -131,5 +169,25 @@ describe("Athlete Daily Goals & Habits Engine", () => {
     expect(clearRes.success).toBe(true);
     expect(clearRes.goals.caloriesTarget).toBeNull();
     expect(clearRes.goals.proteinMinGrams).toBeNull();
+  });
+
+  it("provides science-backed recommended weekly split template", async () => {
+    const weekly = await getRecommendedWeeklyPlanAction();
+    expect(weekly.weeklyWorkoutsTarget).toBe(5);
+    expect(weekly.weeklySplitSchedule).toHaveLength(7);
+    expect(weekly.weeklySplitSchedule[0].day).toBe("Mon");
+    expect(weekly.weeklySplitSchedule[0].isRest).toBe(false);
+    expect(weekly.weeklySplitSchedule[6].day).toBe("Sun");
+    expect(weekly.weeklySplitSchedule[6].isRest).toBe(true);
+  });
+
+  it("provides progressive overload recommended monthly mesocycle roadmap", async () => {
+    const monthly = await getRecommendedMonthlyPlanAction();
+    expect(monthly.monthlyMesocycleName).toContain("4-Week");
+    expect(monthly.monthlyTotalWorkoutsTarget).toBe(20);
+    expect(monthly.monthlyPhases).toHaveLength(4);
+    expect(monthly.monthlyPhases[0].weekNumber).toBe(1);
+    expect(monthly.monthlyPhases[3].weekNumber).toBe(4);
+    expect(monthly.monthlyPhases[3].phaseName).toContain("Deload");
   });
 });

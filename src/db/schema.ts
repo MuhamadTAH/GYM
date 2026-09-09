@@ -204,6 +204,21 @@ export const athleteDailyGoals = sqliteTable("athlete_daily_goals", {
   trainingDaysPerWeek: integer("training_days_per_week"),
   trainingNotes: text("training_notes"),
 
+  // Weekly Planning (nullable - starts empty)
+  weeklyWorkoutsTarget: integer("weekly_workouts_target"),
+  weeklyWalkMinutesTarget: integer("weekly_walk_minutes_target"),
+  weeklyCalorieDeficitTarget: integer("weekly_calorie_deficit_target"),
+  weeklyFocusNotes: text("weekly_focus_notes"),
+  weeklySplitSchedule: text("weekly_split_schedule", { mode: "json" }).$type<WeeklySplitDay[]>(),
+
+  // Monthly Planning (4-Week Mesocycle Block) (nullable - starts empty)
+  monthlyMesocycleName: text("monthly_mesocycle_name"),
+  monthlyPrimaryGoal: text("monthly_primary_goal"),
+  monthlyWeightLossTargetKg: real("monthly_weight_loss_target_kg"),
+  monthlyTotalWorkoutsTarget: integer("monthly_total_workouts_target"),
+  monthlyFocusNotes: text("monthly_focus_notes"),
+  monthlyPhases: text("monthly_phases", { mode: "json" }).$type<MonthlyPhase[]>(),
+
   // Live Today's Logged Metrics (starts at 0)
   todayCalories: real("today_calories").notNull().default(0),
   todayProtein: real("today_protein").notNull().default(0),
@@ -215,6 +230,22 @@ export const athleteDailyGoals = sqliteTable("athlete_daily_goals", {
 
   updatedAt: text("updated_at").notNull(),
 });
+
+export interface WeeklySplitDay {
+  day: string;
+  title: string;
+  focus: string;
+  isRest: boolean;
+  targetMinutes?: number;
+}
+
+export interface MonthlyPhase {
+  weekNumber: number;
+  phaseName: string;
+  intensityRpe: string;
+  volumeDescription: string;
+  focusNotes: string;
+}
 
 export type AthleteDailyGoalsRow = typeof athleteDailyGoals.$inferSelect;
 export type InsertAthleteDailyGoalsRow = typeof athleteDailyGoals.$inferInsert;

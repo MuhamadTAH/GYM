@@ -20,6 +20,13 @@ import {
   X,
   Calendar,
   RefreshCw,
+  CalendarDays,
+  Layers,
+  Check,
+  TrendingDown,
+  ShieldCheck,
+  Award,
+  Zap,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -27,15 +34,53 @@ import {
   logDailyMetricAction,
   resetDailyTrackingAction,
   clearAllGoalsAction,
+  getRecommendedWeeklyPlanAction,
+  getRecommendedMonthlyPlanAction,
   type DailyGoalsData,
   type SaveDailyGoalsInput,
 } from "@/app/actions";
+import type { WeeklySplitDay, MonthlyPhase } from "@/db/schema";
 
 export function GoalsDashboard() {
   const [goals, setGoals] = useState<DailyGoalsData | null>(null);
+  const [periodTab, setPeriodTab] = useState<"daily" | "weekly" | "monthly">("daily");
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isWeeklyConfigOpen, setIsWeeklyConfigOpen] = useState(false);
+  const [isMonthlyConfigOpen, setIsMonthlyConfigOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Form state for weekly plan
+  const [weeklyForm, setWeeklyForm] = useState<{
+    weeklyWorkoutsTarget: string;
+    weeklyWalkMinutesTarget: string;
+    weeklyCalorieDeficitTarget: string;
+    weeklyFocusNotes: string;
+    weeklySplitSchedule: WeeklySplitDay[];
+  }>({
+    weeklyWorkoutsTarget: "",
+    weeklyWalkMinutesTarget: "",
+    weeklyCalorieDeficitTarget: "",
+    weeklyFocusNotes: "",
+    weeklySplitSchedule: [],
+  });
+
+  // Form state for monthly mesocycle
+  const [monthlyForm, setMonthlyForm] = useState<{
+    monthlyMesocycleName: string;
+    monthlyPrimaryGoal: string;
+    monthlyWeightLossTargetKg: string;
+    monthlyTotalWorkoutsTarget: string;
+    monthlyFocusNotes: string;
+    monthlyPhases: MonthlyPhase[];
+  }>({
+    monthlyMesocycleName: "",
+    monthlyPrimaryGoal: "",
+    monthlyWeightLossTargetKg: "",
+    monthlyTotalWorkoutsTarget: "",
+    monthlyFocusNotes: "",
+    monthlyPhases: [],
+  });
 
   // Form state for goal configuration (starts completely empty by default)
   const [form, setForm] = useState<{
@@ -91,6 +136,25 @@ export function GoalsDashboard() {
         trainingDaysPerWeek: data.trainingDaysPerWeek !== null ? String(data.trainingDaysPerWeek) : "",
         trainingNotes: data.trainingNotes ?? "",
       });
+
+      // Sync weekly plan form
+      setWeeklyForm({
+        weeklyWorkoutsTarget: data.weeklyWorkoutsTarget !== null ? String(data.weeklyWorkoutsTarget) : "",
+        weeklyWalkMinutesTarget: data.weeklyWalkMinutesTarget !== null ? String(data.weeklyWalkMinutesTarget) : "",
+        weeklyCalorieDeficitTarget: data.weeklyCalorieDeficitTarget !== null ? String(data.weeklyCalorieDeficitTarget) : "",
+        weeklyFocusNotes: data.weeklyFocusNotes ?? "",
+        weeklySplitSchedule: data.weeklySplitSchedule || [],
+      });
+
+      // Sync monthly plan form
+      setMonthlyForm({
+        monthlyMesocycleName: data.monthlyMesocycleName ?? "",
+        monthlyPrimaryGoal: data.monthlyPrimaryGoal ?? "",
+        monthlyWeightLossTargetKg: data.monthlyWeightLossTargetKg !== null ? String(data.monthlyWeightLossTargetKg) : "",
+        monthlyTotalWorkoutsTarget: data.monthlyTotalWorkoutsTarget !== null ? String(data.monthlyTotalWorkoutsTarget) : "",
+        monthlyFocusNotes: data.monthlyFocusNotes ?? "",
+        monthlyPhases: data.monthlyPhases || [],
+      });
     });
   };
 
@@ -142,6 +206,72 @@ export function GoalsDashboard() {
         setStatusMessage("✅ Daily goals saved successfully!");
         setTimeout(() => setStatusMessage(null), 3000);
       }
+    });
+  };
+
+  const handleSaveWeeklyPlan = (e: React.FormEvent) => {
+    e.preventDefault();
+    startTransition(async () => {
+      const payload: SaveDailyGoalsInput = {
+        weeklyWorkoutsTarget: weeklyForm.weeklyWorkoutsTarget ? Number(weeklyForm.weeklyWorkoutsTarget) : null,
+        weeklyWalkMinutesTarget: weeklyForm.weeklyWalkMinutesTarget ? Number(weeklyForm.weeklyWalkMinutesTarget) : null,
+        weeklyCalorieDeficitTarget: weeklyForm.weeklyCalorieDeficitTarget ? Number(weeklyForm.weeklyCalorieDeficitTarget) : null,
+        weeklyFocusNotes: weeklyForm.weeklyFocusNotes || null,
+        weeklySplitSchedule: weeklyForm.weeklySplitSchedule.length > 0 ? weeklyForm.weeklySplitSchedule : null,
+      };
+
+      const res = await saveDailyGoalsAction(payload);
+      if (res.success) {
+        setGoals(res.goals);
+        setIsWeeklyConfigOpen(false);
+        setStatusMessage("✅ Weekly training plan saved!");
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    });
+  };
+
+  const handleLoadRecommendedWeekly = async () => {
+    const rec = await getRecommendedWeeklyPlanAction();
+    setWeeklyForm({
+      weeklyWorkoutsTarget: String(rec.weeklyWorkoutsTarget),
+      weeklyWalkMinutesTarget: String(rec.weeklyWalkMinutesTarget),
+      weeklyCalorieDeficitTarget: String(rec.weeklyCalorieDeficitTarget),
+      weeklyFocusNotes: rec.weeklyFocusNotes,
+      weeklySplitSchedule: rec.weeklySplitSchedule,
+    });
+  };
+
+  const handleSaveMonthlyPlan = (e: React.FormEvent) => {
+    e.preventDefault();
+    startTransition(async () => {
+      const payload: SaveDailyGoalsInput = {
+        monthlyMesocycleName: monthlyForm.monthlyMesocycleName || null,
+        monthlyPrimaryGoal: monthlyForm.monthlyPrimaryGoal || null,
+        monthlyWeightLossTargetKg: monthlyForm.monthlyWeightLossTargetKg ? Number(monthlyForm.monthlyWeightLossTargetKg) : null,
+        monthlyTotalWorkoutsTarget: monthlyForm.monthlyTotalWorkoutsTarget ? Number(monthlyForm.monthlyTotalWorkoutsTarget) : null,
+        monthlyFocusNotes: monthlyForm.monthlyFocusNotes || null,
+        monthlyPhases: monthlyForm.monthlyPhases.length > 0 ? monthlyForm.monthlyPhases : null,
+      };
+
+      const res = await saveDailyGoalsAction(payload);
+      if (res.success) {
+        setGoals(res.goals);
+        setIsMonthlyConfigOpen(false);
+        setStatusMessage("✅ Monthly mesocycle roadmap saved!");
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    });
+  };
+
+  const handleLoadRecommendedMonthly = async () => {
+    const rec = await getRecommendedMonthlyPlanAction();
+    setMonthlyForm({
+      monthlyMesocycleName: rec.monthlyMesocycleName,
+      monthlyPrimaryGoal: rec.monthlyPrimaryGoal,
+      monthlyWeightLossTargetKg: String(rec.monthlyWeightLossTargetKg),
+      monthlyTotalWorkoutsTarget: String(rec.monthlyTotalWorkoutsTarget),
+      monthlyFocusNotes: rec.monthlyFocusNotes,
+      monthlyPhases: rec.monthlyPhases,
     });
   };
 
@@ -211,6 +341,23 @@ export function GoalsDashboard() {
       goals?.trainingDaysPerWeek
   );
 
+  const hasWeeklyTargetSet = Boolean(
+    goals?.weeklyWorkoutsTarget ||
+      goals?.weeklyWalkMinutesTarget ||
+      goals?.weeklyCalorieDeficitTarget ||
+      goals?.weeklyFocusNotes ||
+      (goals?.weeklySplitSchedule && goals.weeklySplitSchedule.length > 0)
+  );
+
+  const hasMonthlyTargetSet = Boolean(
+    goals?.monthlyMesocycleName ||
+      goals?.monthlyPrimaryGoal ||
+      goals?.monthlyWeightLossTargetKg ||
+      goals?.monthlyTotalWorkoutsTarget ||
+      goals?.monthlyFocusNotes ||
+      (goals?.monthlyPhases && goals.monthlyPhases.length > 0)
+  );
+
   // Adherence calculation
   const totalConfiguredCategories = [
     Boolean(goals?.caloriesTarget),
@@ -243,20 +390,36 @@ export function GoalsDashboard() {
       {/* Top Header Bar */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-            <Target className="w-5 h-5" />
+          <div
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center ${
+              periodTab === "daily"
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                : periodTab === "weekly"
+                ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-400"
+                : "bg-purple-500/10 border-purple-500/20 text-purple-400"
+            }`}
+          >
+            {periodTab === "daily" && <Target className="w-5 h-5" />}
+            {periodTab === "weekly" && <CalendarDays className="w-5 h-5" />}
+            {periodTab === "monthly" && <Layers className="w-5 h-5" />}
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-base sm:text-lg font-black font-mono uppercase tracking-wider text-zinc-100">
-                Daily Goals & Habits
+                {periodTab === "daily" && "Daily Goals & Habits"}
+                {periodTab === "weekly" && "Weekly Training & Deficit Plan"}
+                {periodTab === "monthly" && "Monthly Progressive Overload Mesocycle"}
               </h1>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 AUTOREGULATED
               </span>
             </div>
             <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              Today: <span className="text-zinc-200">{todayDateStr}</span> • Non-negotiable daily adherence
+              {periodTab === "daily" && (
+                <>Today: <span className="text-zinc-200">{todayDateStr}</span> • Non-negotiable daily adherence</>
+              )}
+              {periodTab === "weekly" && "7-Day Split Schedule, target workout volume & active walk goals"}
+              {periodTab === "monthly" && "4-Week progressive overload block roadmap, deload phase & body recomp"}
             </p>
           </div>
         </div>
@@ -273,7 +436,7 @@ export function GoalsDashboard() {
             <span className="hidden sm:inline">Refresh</span>
           </button>
 
-          {hasAnyTargetSet && (
+          {periodTab === "daily" && hasAnyTargetSet && (
             <button
               type="button"
               onClick={handleResetToday}
@@ -286,16 +449,92 @@ export function GoalsDashboard() {
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setIsConfigOpen(true)}
-            className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-emerald-500/20"
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>{hasAnyTargetSet ? "Edit Goals" : "Configure Goals"}</span>
-          </button>
+          {periodTab === "daily" && (
+            <button
+              type="button"
+              onClick={() => setIsConfigOpen(true)}
+              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-emerald-500/20"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>{hasAnyTargetSet ? "Edit Goals" : "Configure Goals"}</span>
+            </button>
+          )}
+
+          {periodTab === "weekly" && (
+            <button
+              type="button"
+              onClick={() => setIsWeeklyConfigOpen(true)}
+              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-indigo-500/20"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>{hasWeeklyTargetSet ? "Edit Weekly Split" : "Configure Weekly Split"}</span>
+            </button>
+          )}
+
+          {periodTab === "monthly" && (
+            <button
+              type="button"
+              onClick={() => setIsMonthlyConfigOpen(true)}
+              className="text-xs font-mono font-bold px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-purple-500/20"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>{hasMonthlyTargetSet ? "Edit Mesocycle" : "Configure Mesocycle"}</span>
+            </button>
+          )}
         </div>
       </header>
+
+      {/* Period Navigation Tabs: Daily Habits, Weekly Plan, Monthly Mesocycle */}
+      <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 self-start w-full sm:w-auto overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setPeriodTab("daily")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
+            periodTab === "daily"
+              ? "bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20"
+              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+          }`}
+        >
+          <Target className="w-3.5 h-3.5" />
+          <span>Daily Habits</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPeriodTab("weekly")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
+            periodTab === "weekly"
+              ? "bg-indigo-500 text-zinc-950 shadow-md shadow-indigo-500/20"
+              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+          }`}
+        >
+          <CalendarDays className="w-3.5 h-3.5" />
+          <span>Weekly Plan</span>
+          {goals?.weeklyWorkoutsTarget && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-950/40 font-black">
+              {goals.weeklyWorkoutsTarget}D
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPeriodTab("monthly")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer ${
+            periodTab === "monthly"
+              ? "bg-purple-500 text-zinc-950 shadow-md shadow-purple-500/20"
+              : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Monthly Mesocycle</span>
+          {goals?.monthlyMesocycleName && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-950/40 font-black">
+              4-WK
+            </span>
+          )}
+        </button>
+      </div>
 
       {/* Notification toast */}
       {statusMessage && (
@@ -305,8 +544,11 @@ export function GoalsDashboard() {
         </div>
       )}
 
-      {/* Empty State Banner if no goals are configured yet */}
-      {!hasAnyTargetSet && (
+      {/* PERIOD TAB 1: DAILY HABITS */}
+      {periodTab === "daily" && (
+        <>
+          {/* Empty State Banner if no goals are configured yet */}
+          {!hasAnyTargetSet && (
         <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
           <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
             <Target className="w-7 h-7" />
@@ -788,6 +1030,357 @@ export function GoalsDashboard() {
           </div>
         </section>
       </div>
+        </>
+      )}
+
+      {/* PERIOD TAB 2: WEEKLY TRAINING & DEFICIT PLAN */}
+      {periodTab === "weekly" && (
+        <div className="flex flex-col gap-6 animate-in fade-in duration-200">
+          {/* Empty State Banner if no weekly plan is set */}
+          {!hasWeeklyTargetSet && (
+            <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <CalendarDays className="w-7 h-7" />
+              </div>
+              <div className="max-w-md">
+                <h2 className="text-base sm:text-lg font-black font-mono text-zinc-100 uppercase tracking-wide">
+                  No Weekly Plan Configured Yet
+                </h2>
+                <p className="text-xs text-zinc-400 font-mono mt-1.5 leading-relaxed">
+                  Map out your 7-day training split, weekly walk volume, and deficit goals. Start with a clean schedule or load the recommended 5-day double-progression split.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsWeeklyConfigOpen(true)}
+                  className="text-xs font-mono font-bold px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-2 transition cursor-pointer border border-zinc-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Configure Custom Split</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleLoadRecommendedWeekly();
+                    setIsWeeklyConfigOpen(true);
+                  }}
+                  className="text-xs font-mono font-bold px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 flex items-center gap-2 transition cursor-pointer shadow-lg shadow-indigo-500/20"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Load Recommended 5-Day Plan</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Weekly Targets Overview Card */}
+          {hasWeeklyTargetSet && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Target Workouts</div>
+                  <div className="text-xl font-mono font-black text-indigo-400 mt-1">
+                    {goals?.weeklyWorkoutsCompleted ?? 0}
+                    {goals?.weeklyWorkoutsTarget ? ` / ${goals.weeklyWorkoutsTarget} Sessions` : " Sessions"}
+                  </div>
+                </div>
+                <div className="w-full bg-zinc-950 h-1.5 rounded-full overflow-hidden mt-3 border border-zinc-850">
+                  <div
+                    className="h-full bg-indigo-400 rounded-full transition-all duration-500"
+                    style={{
+                      width: `${goals?.weeklyWorkoutsTarget ? Math.min(100, ((goals.weeklyWorkoutsCompleted ?? 0) / goals.weeklyWorkoutsTarget) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Weekly Walk Target</div>
+                  <div className="text-xl font-mono font-black text-emerald-400 mt-1">
+                    {goals?.weeklyWalkMinutesTarget ? `${goals.weeklyWalkMinutesTarget} min` : "Unset"}
+                  </div>
+                </div>
+                <p className="text-[11px] font-mono text-zinc-400 mt-2">Active NEAT metabolic rate support</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Calorie Deficit Target</div>
+                  <div className="text-xl font-mono font-black text-orange-400 mt-1">
+                    {goals?.weeklyCalorieDeficitTarget ? `~${goals.weeklyCalorieDeficitTarget} kcal` : "Unset"}
+                  </div>
+                </div>
+                <p className="text-[11px] font-mono text-zinc-400 mt-2">Cumulative fat-loss deficit standard</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Split Architecture</div>
+                  <div className="text-sm font-mono font-bold text-zinc-200 mt-1 truncate">
+                    {goals?.weeklySplitSchedule?.length
+                      ? `${goals.weeklySplitSchedule.filter((d) => !d.isRest).length} Training / ${goals.weeklySplitSchedule.filter((d) => d.isRest).length} Recovery`
+                      : "Custom Architecture"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsWeeklyConfigOpen(true)}
+                  className="mt-2 text-xs font-mono text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer self-start"
+                >
+                  <Sliders className="w-3 h-3" />
+                  <span>Edit Schedule</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Strategy Notes Banner */}
+          {goals?.weeklyFocusNotes && (
+            <div className="p-4 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-indigo-200 font-mono text-xs flex items-start gap-3 shadow-lg">
+              <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold uppercase tracking-wider block text-indigo-300 mb-0.5">
+                  Weekly Execution Standard:
+                </span>
+                <p className="leading-relaxed">{goals.weeklyFocusNotes}</p>
+              </div>
+            </div>
+          )}
+
+          {/* 7-Day Split Schedule Grid */}
+          {goals?.weeklySplitSchedule && goals.weeklySplitSchedule.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-indigo-400" />
+                  <h3 className="text-xs font-mono font-black text-zinc-300 uppercase tracking-wider">
+                    7-Day Prescribed Schedule
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsWeeklyConfigOpen(true)}
+                  className="text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit Split</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+                {goals.weeklySplitSchedule.map((day, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3.5 rounded-2xl border flex flex-col justify-between transition ${
+                      day.isRest
+                        ? "bg-zinc-950/80 border-zinc-850 text-zinc-400"
+                        : "bg-zinc-900/90 border-zinc-800 text-zinc-100 shadow-md shadow-black/40"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
+                          {day.day}
+                        </span>
+                        <span
+                          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
+                            day.isRest
+                              ? "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                              : "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                          }`}
+                        >
+                          {day.isRest ? "REST / WALK" : "WORKOUT"}
+                        </span>
+                      </div>
+                      <div className="text-xs font-mono font-bold text-zinc-200 mb-1 line-clamp-2">
+                        {day.title}
+                      </div>
+                      <p className="text-[10px] font-mono text-zinc-400 leading-relaxed line-clamp-3">
+                        {day.focus}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PERIOD TAB 3: MONTHLY PROGRESSIVE OVERLOAD MESOCYCLE */}
+      {periodTab === "monthly" && (
+        <div className="flex flex-col gap-6 animate-in fade-in duration-200">
+          {/* Empty State Banner if no monthly mesocycle is configured */}
+          {!hasMonthlyTargetSet && (
+            <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 flex flex-col items-center text-center gap-4 shadow-2xl">
+              <div className="w-14 h-14 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                <Layers className="w-7 h-7" />
+              </div>
+              <div className="max-w-md">
+                <h2 className="text-base sm:text-lg font-black font-mono text-zinc-100 uppercase tracking-wide">
+                  No Monthly Mesocycle Configured Yet
+                </h2>
+                <p className="text-xs text-zinc-400 font-mono mt-1.5 leading-relaxed">
+                  Plan your 4-week progressive overload block, scheduled deload week, and monthly body recomposition milestones.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsMonthlyConfigOpen(true)}
+                  className="text-xs font-mono font-bold px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 flex items-center gap-2 transition cursor-pointer border border-zinc-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Configure Mesocycle</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await handleLoadRecommendedMonthly();
+                    setIsMonthlyConfigOpen(true);
+                  }}
+                  className="text-xs font-mono font-bold px-5 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 flex items-center gap-2 transition cursor-pointer shadow-lg shadow-purple-500/20"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Load 4-Week Overload Block</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Mesocycle Overview Card */}
+          {hasMonthlyTargetSet && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Mesocycle Block</div>
+                  <div className="text-base font-mono font-black text-purple-400 mt-1 truncate">
+                    {goals?.monthlyMesocycleName || "4-Week Block"}
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold self-start mt-2">
+                  AUTOREGULATED 4 WEEKS
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Primary Training Goal</div>
+                  <div className="text-sm font-mono font-bold text-zinc-200 mt-1 capitalize">
+                    {goals?.monthlyPrimaryGoal || "Hypertrophy & Deficit"}
+                  </div>
+                </div>
+                <p className="text-[11px] font-mono text-zinc-400 mt-2">Progressive overload + fat-loss deficit</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Monthly Recomp Target</div>
+                  <div className="text-xl font-mono font-black text-emerald-400 mt-1">
+                    {goals?.monthlyWeightLossTargetKg ? `-${goals.monthlyWeightLossTargetKg} kg` : "Unset"}
+                  </div>
+                </div>
+                <p className="text-[11px] font-mono text-zinc-400 mt-2">Steady fat loss with lean mass preservation</p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 uppercase">Total Sessions Target</div>
+                  <div className="text-xl font-mono font-black text-indigo-400 mt-1">
+                    {goals?.monthlyTotalWorkoutsTarget ? `${goals.monthlyTotalWorkoutsTarget} Workouts` : "20 Sessions"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMonthlyConfigOpen(true)}
+                  className="mt-2 text-xs font-mono text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1 cursor-pointer self-start"
+                >
+                  <Sliders className="w-3 h-3" />
+                  <span>Edit Block</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Mesocycle Strategic Notes */}
+          {goals?.monthlyFocusNotes && (
+            <div className="p-4 rounded-2xl bg-purple-950/30 border border-purple-500/20 text-purple-200 font-mono text-xs flex items-start gap-3 shadow-lg">
+              <Award className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold uppercase tracking-wider block text-purple-300 mb-0.5">
+                  Monthly Block Objective:
+                </span>
+                <p className="leading-relaxed">{goals.monthlyFocusNotes}</p>
+              </div>
+            </div>
+          )}
+
+          {/* 4-Week Progression Roadmap Cards */}
+          {goals?.monthlyPhases && goals.monthlyPhases.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-purple-400" />
+                  <h3 className="text-xs font-mono font-black text-zinc-300 uppercase tracking-wider">
+                    4-Week Progression Roadmap
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMonthlyConfigOpen(true)}
+                  className="text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit Phases</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {goals.monthlyPhases.map((phase) => (
+                  <div
+                    key={phase.weekNumber}
+                    className={`p-4 rounded-2xl border flex flex-col justify-between transition ${
+                      phase.weekNumber === 4
+                        ? "bg-teal-950/20 border-teal-500/30"
+                        : "bg-zinc-900/90 border-zinc-800 shadow-md shadow-black/40"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-mono font-black uppercase tracking-wider text-zinc-300">
+                          WEEK {phase.weekNumber}
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                            phase.weekNumber === 4
+                              ? "bg-teal-500/20 text-teal-300 border border-teal-500/30"
+                              : phase.weekNumber === 3
+                              ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                              : "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                          }`}
+                        >
+                          {phase.intensityRpe}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-mono font-bold text-zinc-100 mb-1">
+                        {phase.phaseName}
+                      </h4>
+                      <div className="text-[11px] font-mono text-zinc-400 mb-2 font-medium">
+                        📊 {phase.volumeDescription}
+                      </div>
+                      <p className="text-[10px] font-mono text-zinc-400 leading-relaxed bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-850">
+                        {phase.focusNotes}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* MODAL: CONFIGURE / EDIT GOALS (Completely empty by default) */}
       {isConfigOpen && (
@@ -1030,6 +1623,426 @@ export function GoalsDashboard() {
                     {isPending ? "Saving..." : "Save My Goals"}
                   </button>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIGURE WEEKLY PLAN */}
+      {isWeeklyConfigOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-indigo-400" />
+                <h2 className="text-sm font-black font-mono uppercase tracking-wider text-zinc-100">
+                  Configure Weekly Training & Habit Plan
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWeeklyConfigOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <form onSubmit={handleSaveWeeklyPlan} className="p-6 overflow-y-auto space-y-5">
+              {/* Quick Template loader */}
+              <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-mono font-bold text-indigo-300">
+                    ⚡ 1-Click Recommended 5-Day Plan
+                  </div>
+                  <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
+                    Populate an optimal Push/Pull/Legs/Upper split with 175m active walk & 3,150 kcal deficit.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLoadRecommendedWeekly}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 text-xs font-mono font-bold transition cursor-pointer shrink-0 self-start sm:self-auto"
+                >
+                  Load 5-Day Split
+                </button>
+              </div>
+
+              {/* Weekly Targets */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Target Workouts / Week
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="7"
+                    placeholder="e.g., 5"
+                    value={weeklyForm.weeklyWorkoutsTarget}
+                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyWorkoutsTarget: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Weekly Walk Target (Minutes)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 175"
+                    value={weeklyForm.weeklyWalkMinutesTarget}
+                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyWalkMinutesTarget: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Weekly Calorie Deficit (kcal)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 3150"
+                    value={weeklyForm.weeklyCalorieDeficitTarget}
+                    onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyCalorieDeficitTarget: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Weekly Focus Notes */}
+              <div>
+                <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                  Weekly Execution & Discipline Standard
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g., Complete prescribed reps with double progression; stop at technical failure; zero pain standard."
+                  value={weeklyForm.weeklyFocusNotes}
+                  onChange={(e) => setWeeklyForm({ ...weeklyForm, weeklyFocusNotes: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {/* 7-Day Split Days Editor */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider block">
+                    7-Day Split Days (Mon - Sun)
+                  </label>
+                  {weeklyForm.weeklySplitSchedule.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWeeklyForm({
+                          ...weeklyForm,
+                          weeklySplitSchedule: [
+                            { day: "Mon", title: "Push", focus: "Chest & Shoulders", isRest: false },
+                            { day: "Tue", title: "Pull", focus: "Back & Biceps", isRest: false },
+                            { day: "Wed", title: "Active Recovery", focus: "30m Brisk Walk", isRest: true },
+                            { day: "Thu", title: "Legs", focus: "Squats & Calves", isRest: false },
+                            { day: "Fri", title: "Upper Body", focus: "Chest, Back, Arms", isRest: false },
+                            { day: "Sat", title: "Conditioning & Walk", focus: "Zone 2 Cardio", isRest: false },
+                            { day: "Sun", title: "Rest", focus: "Full Recovery", isRest: true },
+                          ],
+                        })
+                      }
+                      className="text-xs font-mono text-indigo-400 hover:text-indigo-300 font-bold"
+                    >
+                      + Add 7 Blank Days
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2.5">
+                  {weeklyForm.weeklySplitSchedule.map((day, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
+                    >
+                      <div className="sm:col-span-2 font-mono font-bold text-xs text-indigo-400 uppercase">
+                        {day.day}
+                      </div>
+                      <div className="sm:col-span-4">
+                        <input
+                          type="text"
+                          placeholder="Session title..."
+                          value={day.title}
+                          onChange={(e) => {
+                            const updated = [...weeklyForm.weeklySplitSchedule];
+                            updated[idx] = { ...updated[idx], title: e.target.value };
+                            setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
+                          }}
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="sm:col-span-4">
+                        <input
+                          type="text"
+                          placeholder="Target focus / movements..."
+                          value={day.focus}
+                          onChange={(e) => {
+                            const updated = [...weeklyForm.weeklySplitSchedule];
+                            updated[idx] = { ...updated[idx], focus: e.target.value };
+                            setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
+                          }}
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 flex items-center justify-end">
+                        <label className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={day.isRest}
+                            onChange={(e) => {
+                              const updated = [...weeklyForm.weeklySplitSchedule];
+                              updated[idx] = { ...updated[idx], isRest: e.target.checked };
+                              setWeeklyForm({ ...weeklyForm, weeklySplitSchedule: updated });
+                            }}
+                            className="rounded border-zinc-700 text-indigo-500 focus:ring-0"
+                          />
+                          <span>Rest Day</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsWeeklyConfigOpen(false)}
+                  className="text-xs font-mono px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="text-xs font-mono font-bold px-5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-zinc-950 transition cursor-pointer shadow-lg shadow-indigo-500/20 disabled:opacity-50"
+                >
+                  {isPending ? "Saving..." : "Save Weekly Plan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIGURE MONTHLY MESOCYCLE */}
+      {isMonthlyConfigOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-purple-400" />
+                <h2 className="text-sm font-black font-mono uppercase tracking-wider text-zinc-100">
+                  Configure 4-Week Mesocycle Roadmap
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMonthlyConfigOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <form onSubmit={handleSaveMonthlyPlan} className="p-6 overflow-y-auto space-y-5">
+              {/* Quick Template loader */}
+              <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-mono font-bold text-purple-300">
+                    ⚡ 1-Click Recommended 4-Week Block
+                  </div>
+                  <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
+                    Accumulation (RPE 7-8) ➔ Progressive Overload (RPE 8-8.5) ➔ Peak Overreach (RPE 9-10) ➔ Deload (RPE 6-7).
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleLoadRecommendedMonthly}
+                  className="px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 text-xs font-mono font-bold transition cursor-pointer shrink-0 self-start sm:self-auto"
+                >
+                  Load 4-Week Overload
+                </button>
+              </div>
+
+              {/* Monthly Targets */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Mesocycle Block Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., 4-Week Autoregulated Block"
+                    value={monthlyForm.monthlyMesocycleName}
+                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyMesocycleName: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Primary Training Goal
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Recomposition / Hypertrophy + Fat-Loss"
+                    value={monthlyForm.monthlyPrimaryGoal}
+                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyPrimaryGoal: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Monthly Weight Loss / Delta (kg)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g., 1.8"
+                    value={monthlyForm.monthlyWeightLossTargetKg}
+                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyWeightLossTargetKg: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                    Total Workouts in Block
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 20"
+                    value={monthlyForm.monthlyTotalWorkoutsTarget}
+                    onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyTotalWorkoutsTarget: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Monthly Focus Notes */}
+              <div>
+                <label className="text-[11px] font-mono text-zinc-400 block mb-1">
+                  Monthly Block Strategy & Autoregulation Directive
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g., Maintain 450 kcal deficit with high protein; micro-load weekly and execute deload on Week 4."
+                  value={monthlyForm.monthlyFocusNotes}
+                  onChange={(e) => setMonthlyForm({ ...monthlyForm, monthlyFocusNotes: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* 4-Week Phase Editors */}
+              <div className="space-y-3">
+                <label className="text-xs font-mono font-bold text-zinc-300 uppercase tracking-wider block">
+                  4-Week Progression Phases
+                </label>
+
+                <div className="space-y-3">
+                  {monthlyForm.monthlyPhases.map((phase, idx) => (
+                    <div key={idx} className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-bold text-xs text-purple-400 uppercase">
+                          Week {phase.weekNumber} Phase
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Phase Name</label>
+                          <input
+                            type="text"
+                            placeholder="Phase name..."
+                            value={phase.phaseName}
+                            onChange={(e) => {
+                              const updated = [...monthlyForm.monthlyPhases];
+                              updated[idx] = { ...updated[idx], phaseName: e.target.value };
+                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
+                            }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Target RPE</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. RPE 7-8"
+                            value={phase.intensityRpe}
+                            onChange={(e) => {
+                              const updated = [...monthlyForm.monthlyPhases];
+                              updated[idx] = { ...updated[idx], intensityRpe: e.target.value };
+                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
+                            }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Volume Description</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. 3 sets @ 70% 1RM..."
+                            value={phase.volumeDescription}
+                            onChange={(e) => {
+                              const updated = [...monthlyForm.monthlyPhases];
+                              updated[idx] = { ...updated[idx], volumeDescription: e.target.value };
+                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
+                            }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-mono text-zinc-500 block mb-0.5">Strategy Directives</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Establish baseline loads..."
+                            value={phase.focusNotes}
+                            onChange={(e) => {
+                              const updated = [...monthlyForm.monthlyPhases];
+                              updated[idx] = { ...updated[idx], focusNotes: e.target.value };
+                              setMonthlyForm({ ...monthlyForm, monthlyPhases: updated });
+                            }}
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-zinc-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsMonthlyConfigOpen(false)}
+                  className="text-xs font-mono px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="text-xs font-mono font-bold px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-zinc-950 transition cursor-pointer shadow-lg shadow-purple-500/20 disabled:opacity-50"
+                >
+                  {isPending ? "Saving..." : "Save Mesocycle"}
+                </button>
               </div>
             </form>
           </div>
