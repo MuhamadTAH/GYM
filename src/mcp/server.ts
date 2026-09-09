@@ -21,6 +21,8 @@ import {
   generateNewMesocycleAction,
   swapSessionOrderAction,
   postChatReplyAction,
+  getDailyGoalsAction,
+  saveDailyGoalsAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -75,6 +77,13 @@ export function registerHandlers(server: Server) {
           "Returns all pending athlete messages sent from the dashboard waiting for AI response.",
         mimeType: "application/json",
       },
+      {
+        uri: "gym://goals",
+        name: "Athlete Daily Goals & Strategy",
+        description:
+          "Returns the athlete's configured daily targets for Calories, Protein, Water, Daily Walk, and Training Adherence, along with today's logged status.",
+        mimeType: "application/json",
+      },
     ],
   };
 });
@@ -84,6 +93,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   console.error(`[MCP:gym-engine] Reading resource: ${uri}`);
 
   switch (uri) {
+    case "gym://goals": {
+      const goals = await getDailyGoalsAction();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(goals, null, 2),
+          },
+        ],
+      };
+    }
+
     case "gym://profile": {
       const profile = await getUserProfileAction();
       return {
@@ -343,6 +365,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["message_id", "reply_text"],
         },
       },
+      {
+        name: "get_daily_goals",
+        description:
+          "Fetch the athlete's configured targets and strategic notes for calories, protein, hydration, walk, and training adherence, along with today's logged intake.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "update_daily_goals",
+        description:
+          "Update the athlete's custom daily targets and notes for calories, protein, water, walk, or training adherence.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            calories_target: { type: "number", description: "Target calories (kcal)." },
+            calories_notes: { type: "string", description: "Deficit or caloric strategy context notes." },
+            protein_min_grams: { type: "number", description: "Minimum protein target in grams." },
+            protein_max_grams: { type: "number", description: "Maximum protein target in grams." },
+            protein_notes: { type: "string", description: "Protein sources and meal staples notes." },
+            water_min_liters: { type: "number", description: "Minimum water intake in Liters." },
+            water_max_liters: { type: "number", description: "Maximum water intake in Liters." },
+            water_notes: { type: "string", description: "Hydration reminder notes." },
+            daily_walk_min_minutes: { type: "number", description: "Minimum daily walk duration in minutes." },
+            daily_walk_max_minutes: { type: "number", description: "Maximum daily walk duration in minutes." },
+            daily_walk_notes: { type: "string", description: "Metabolic rate / NEAT walking notes." },
+            training_days_per_week: { type: "integer", description: "Target workout days per week." },
+            training_notes: { type: "string", description: "Technical execution and pain-free discipline standards." },
+          },
+        },
+      },
     ],
   };
 });
@@ -577,6 +631,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 null,
                 2
               ),
+            },
+          ],
+        };
+      }
+
+      case "get_daily_goals": {
+        const result = await getDailyGoalsAction();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "update_daily_goals": {
+        const result = await saveDailyGoalsAction({
+          caloriesTarget: args?.calories_target !== undefined ? Number(args.calories_target) : undefined,
+          caloriesNotes: args?.calories_notes !== undefined ? String(args.calories_notes) : undefined,
+          proteinMinGrams: args?.protein_min_grams !== undefined ? Number(args.protein_min_grams) : undefined,
+          proteinMaxGrams: args?.protein_max_grams !== undefined ? Number(args.protein_max_grams) : undefined,
+          proteinNotes: args?.protein_notes !== undefined ? String(args.protein_notes) : undefined,
+          waterMinLiters: args?.water_min_liters !== undefined ? Number(args.water_min_liters) : undefined,
+          waterMaxLiters: args?.water_max_liters !== undefined ? Number(args.water_max_liters) : undefined,
+          waterNotes: args?.water_notes !== undefined ? String(args.water_notes) : undefined,
+          dailyWalkMinMinutes: args?.daily_walk_min_minutes !== undefined ? Number(args.daily_walk_min_minutes) : undefined,
+          dailyWalkMaxMinutes: args?.daily_walk_max_minutes !== undefined ? Number(args.daily_walk_max_minutes) : undefined,
+          dailyWalkNotes: args?.daily_walk_notes !== undefined ? String(args.daily_walk_notes) : undefined,
+          trainingDaysPerWeek: args?.training_days_per_week !== undefined ? Number(args.training_days_per_week) : undefined,
+          trainingNotes: args?.training_notes !== undefined ? String(args.training_notes) : undefined,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };

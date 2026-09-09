@@ -99,6 +99,31 @@ CREATE TABLE IF NOT EXISTS coach_messages (
 	replied_at text,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
+
+CREATE TABLE IF NOT EXISTS athlete_daily_goals (
+	id text PRIMARY KEY NOT NULL,
+	user_id text NOT NULL,
+	calories_target real,
+	calories_notes text,
+	protein_min_grams real,
+	protein_max_grams real,
+	protein_notes text,
+	water_min_liters real,
+	water_max_liters real,
+	water_notes text,
+	daily_walk_min_minutes real,
+	daily_walk_max_minutes real,
+	daily_walk_notes text,
+	training_days_per_week integer,
+	training_notes text,
+	today_calories real DEFAULT 0 NOT NULL,
+	today_protein real DEFAULT 0 NOT NULL,
+	today_water_liters real DEFAULT 0 NOT NULL,
+	today_walk_minutes real DEFAULT 0 NOT NULL,
+	today_training_completed integer DEFAULT false NOT NULL,
+	updated_at text NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
+);
 `;
 
 // Run SQLite in WAL mode with a busy timeout and ensure schema tables exist

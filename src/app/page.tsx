@@ -1,15 +1,16 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Dumbbell, BarChart3, User, Bot } from "lucide-react";
+import { Dumbbell, BarChart3, User, Bot, Target } from "lucide-react";
 import { ShorthandLogger } from "@/components/shorthand-logger";
+import { GoalsDashboard } from "@/components/goals-dashboard";
 import { CommandCenter } from "@/components/command-center";
 import { CoachDashboard } from "@/components/coach-dashboard";
 import { ProfileModal } from "@/components/profile-modal";
 import { getUserProfileAction } from "@/app/actions";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"hud" | "command_center" | "coach">("hud");
+  const [activeTab, setActiveTab] = useState<"hud" | "goals" | "command_center" | "coach">("hud");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [userName, setUserName] = useState("Athlete");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -62,11 +63,11 @@ export default function Home() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-3 sm:flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 font-mono text-[11px] sm:text-xs">
+        <div className="grid grid-cols-4 sm:flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 font-mono text-[10px] sm:text-xs">
           <button
             type="button"
             onClick={() => setActiveTab("hud")}
-            className={`py-2 px-3 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2 px-2 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer ${
               activeTab === "hud"
                 ? "bg-emerald-500 text-zinc-950 shadow-md"
                 : "text-zinc-400 hover:text-zinc-200"
@@ -77,20 +78,32 @@ export default function Home() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("goals")}
+            className={`py-2 px-2 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer ${
+              activeTab === "goals"
+                ? "bg-amber-400 text-zinc-950 shadow-md"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            <Target className="w-4 h-4" />
+            <span>Goals</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("command_center")}
-            className={`py-2 px-3 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2 px-2 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer ${
               activeTab === "command_center"
                 ? "bg-indigo-600 text-white shadow-md"
                 : "text-zinc-400 hover:text-zinc-200"
             }`}
           >
             <BarChart3 className="w-4 h-4" />
-            <span>Plan & Macros</span>
+            <span>Plan</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("coach")}
-            className={`py-2 px-3 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-2 transition cursor-pointer ${
+            className={`py-2 px-2 sm:px-5 rounded-lg font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition cursor-pointer ${
               activeTab === "coach"
                 ? "bg-purple-600 text-white shadow-md"
                 : "text-zinc-400 hover:text-zinc-200"
@@ -117,6 +130,7 @@ export default function Home() {
       {/* Main Tab Content View - Responsive Width */}
       <div key={refreshKey} className="w-full max-w-6xl flex-1 px-3 sm:px-6 py-4">
         {activeTab === "hud" && <ShorthandLogger />}
+        {activeTab === "goals" && <GoalsDashboard />}
         {activeTab === "command_center" && <CommandCenter />}
         {activeTab === "coach" && <CoachDashboard />}
       </div>

@@ -172,3 +172,50 @@ export const coachMessages = sqliteTable("coach_messages", {
 export type CoachMessageRow = typeof coachMessages.$inferSelect;
 export type InsertCoachMessageRow = typeof coachMessages.$inferInsert;
 
+/**
+ * CORE RELATIONAL TABLE: athlete_daily_goals (Custom User Daily Targets & Check-ins)
+ */
+export const athleteDailyGoals = sqliteTable("athlete_daily_goals", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => userProfiles.id, { onDelete: "cascade" }),
+
+  // Calories Target (nullable - starts empty)
+  caloriesTarget: real("calories_target"),
+  caloriesNotes: text("calories_notes"),
+
+  // Protein Target (nullable - starts empty)
+  proteinMinGrams: real("protein_min_grams"),
+  proteinMaxGrams: real("protein_max_grams"),
+  proteinNotes: text("protein_notes"),
+
+  // Water Intake Target (nullable - starts empty)
+  waterMinLiters: real("water_min_liters"),
+  waterMaxLiters: real("water_max_liters"),
+  waterNotes: text("water_notes"),
+
+  // Daily Walk Target (nullable - starts empty)
+  dailyWalkMinMinutes: real("daily_walk_min_minutes"),
+  dailyWalkMaxMinutes: real("daily_walk_max_minutes"),
+  dailyWalkNotes: text("daily_walk_notes"),
+
+  // Training Adherence Target (nullable - starts empty)
+  trainingDaysPerWeek: integer("training_days_per_week"),
+  trainingNotes: text("training_notes"),
+
+  // Live Today's Logged Metrics (starts at 0)
+  todayCalories: real("today_calories").notNull().default(0),
+  todayProtein: real("today_protein").notNull().default(0),
+  todayWaterLiters: real("today_water_liters").notNull().default(0),
+  todayWalkMinutes: real("today_walk_minutes").notNull().default(0),
+  todayTrainingCompleted: integer("today_training_completed", { mode: "boolean" })
+    .notNull()
+    .default(false),
+
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type AthleteDailyGoalsRow = typeof athleteDailyGoals.$inferSelect;
+export type InsertAthleteDailyGoalsRow = typeof athleteDailyGoals.$inferInsert;
+

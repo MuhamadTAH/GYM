@@ -29,9 +29,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     await client.close();
   });
 
-  it("lists all 5 read-only resources with exact URIs", async () => {
+  it("lists all 6 read-only resources with exact URIs", async () => {
     const res = await client.listResources();
-    expect(res.resources).toHaveLength(5);
+    expect(res.resources).toHaveLength(6);
 
     const uris = res.resources.map((r) => r.uri);
     expect(uris).toContain("gym://profile");
@@ -39,6 +39,7 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(uris).toContain("gym://mesocycle/summary");
     expect(uris).toContain("gym://history/recent");
     expect(uris).toContain("gym://chat/pending");
+    expect(uris).toContain("gym://goals");
   });
 
   it("reads gym://profile resource correctly", async () => {
@@ -96,9 +97,19 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(Array.isArray(pending)).toBe(true);
   });
 
-  it("lists all 8 action & state mutation tools", async () => {
+  it("reads gym://goals resource correctly", async () => {
+    const res = await client.readResource({ uri: "gym://goals" });
+    expect(res.contents).toHaveLength(1);
+
+    const textContent = res.contents[0] as { text: string };
+    const goals = JSON.parse(textContent.text);
+    expect(goals).toBeDefined();
+    expect(goals.userId).toBeDefined();
+  });
+
+  it("lists all 10 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(8);
+    expect(res.tools).toHaveLength(10);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -109,6 +120,29 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("swap_workout_order");
     expect(toolNames).toContain("get_pending_chat_messages");
     expect(toolNames).toContain("post_chat_reply");
+    expect(toolNames).toContain("get_daily_goals");
+    expect(toolNames).toContain("update_daily_goals");
+  });
+
+  it("calls update_daily_goals and get_daily_goals tools", async () => {
+    const updateRes = await client.callTool({
+      name: "update_daily_goals",
+      arguments: {
+        calories_target: 1900,
+        calories_notes: "fat loss deficit",
+        protein_min_grams: 65,
+      },
+    });
+    expect(updateRes.isError).toBeFalsy();
+
+    const getRes = await client.callTool({
+      name: "get_daily_goals",
+      arguments: {},
+    });
+    expect(getRes.isError).toBeFalsy();
+    const payload = JSON.parse(((getRes as any).content[0] as { text: string }).text);
+    expect(payload.caloriesTarget).toBe(1900);
+    expect(payload.proteinMinGrams).toBe(65);
   });
 
   it("calls calculate_nutrition tool deterministically", async () => {

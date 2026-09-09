@@ -1,8 +1,15 @@
 "use server";
 
 import { db } from "@/db";
-import { userProfiles, workoutSessions, exerciseSets, coachMessages } from "@/db/schema";
-import { eq, desc, asc, and, ne } from "drizzle-orm";
+import {
+  userProfiles,
+  workoutSessions,
+  exerciseSets,
+  coachMessages,
+  athleteDailyGoals,
+  type AthleteDailyGoalsRow,
+} from "@/db/schema";
+import { eq, desc, asc, and, ne, gte } from "drizzle-orm";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
 import { calculateBrzycki1RM, calculateProgressiveOverload } from "@/lib/math";
@@ -1163,6 +1170,320 @@ export async function postChatReplyAction(
     .where(eq(coachMessages.id, messageId));
 
   return { success: true, messageId };
+}
+
+/* =========================================================================
+   ATHLETE DAILY GOALS & HABITS ENGINE
+   ========================================================================= */
+
+export interface DailyGoalsData {
+  id?: string;
+  userId: string;
+  caloriesTarget: number | null;
+  caloriesNotes: string | null;
+  proteinMinGrams: number | null;
+  proteinMaxGrams: number | null;
+  proteinNotes: string | null;
+  waterMinLiters: number | null;
+  waterMaxLiters: number | null;
+  waterNotes: string | null;
+  dailyWalkMinMinutes: number | null;
+  dailyWalkMaxMinutes: number | null;
+  dailyWalkNotes: string | null;
+  trainingDaysPerWeek: number | null;
+  trainingNotes: string | null;
+  todayCalories: number;
+  todayProtein: number;
+  todayWaterLiters: number;
+  todayWalkMinutes: number;
+  todayTrainingCompleted: boolean;
+  weeklyWorkoutsCompleted: number;
+  updatedAt?: string;
+}
+
+export interface SaveDailyGoalsInput {
+  caloriesTarget?: number | null;
+  caloriesNotes?: string | null;
+  proteinMinGrams?: number | null;
+  proteinMaxGrams?: number | null;
+  proteinNotes?: string | null;
+  waterMinLiters?: number | null;
+  waterMaxLiters?: number | null;
+  waterNotes?: string | null;
+  dailyWalkMinMinutes?: number | null;
+  dailyWalkMaxMinutes?: number | null;
+  dailyWalkNotes?: string | null;
+  trainingDaysPerWeek?: number | null;
+  trainingNotes?: string | null;
+}
+
+/**
+ * Retrieve the athlete's current custom daily goals and today's tracking status.
+ * Starts completely un-prefilled (all targets null) if not previously configured.
+ */
+export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+
+  // Count workouts completed in the last 7 days for adherence calculation
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const completedSessions = await db
+    .select()
+    .from(workoutSessions)
+    .where(
+      and(
+        eq(workoutSessions.userId, userId),
+        eq(workoutSessions.status, "completed"),
+        gte(workoutSessions.startedAt, oneWeekAgo)
+      )
+    );
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    return {
+      userId,
+      caloriesTarget: null,
+      caloriesNotes: null,
+      proteinMinGrams: null,
+      proteinMaxGrams: null,
+      proteinNotes: null,
+      waterMinLiters: null,
+      waterMaxLiters: null,
+      waterNotes: null,
+      dailyWalkMinMinutes: null,
+      dailyWalkMaxMinutes: null,
+      dailyWalkNotes: null,
+      trainingDaysPerWeek: null,
+      trainingNotes: null,
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+      weeklyWorkoutsCompleted: completedSessions.length,
+    };
+  }
+
+  const row = existing[0];
+  return {
+    id: row.id,
+    userId: row.userId,
+    caloriesTarget: row.caloriesTarget,
+    caloriesNotes: row.caloriesNotes,
+    proteinMinGrams: row.proteinMinGrams,
+    proteinMaxGrams: row.proteinMaxGrams,
+    proteinNotes: row.proteinNotes,
+    waterMinLiters: row.waterMinLiters,
+    waterMaxLiters: row.waterMaxLiters,
+    waterNotes: row.waterNotes,
+    dailyWalkMinMinutes: row.dailyWalkMinMinutes,
+    dailyWalkMaxMinutes: row.dailyWalkMaxMinutes,
+    dailyWalkNotes: row.dailyWalkNotes,
+    trainingDaysPerWeek: row.trainingDaysPerWeek,
+    trainingNotes: row.trainingNotes,
+    todayCalories: row.todayCalories ?? 0,
+    todayProtein: row.todayProtein ?? 0,
+    todayWaterLiters: row.todayWaterLiters ?? 0,
+    todayWalkMinutes: row.todayWalkMinutes ?? 0,
+    todayTrainingCompleted: Boolean(row.todayTrainingCompleted),
+    weeklyWorkoutsCompleted: completedSessions.length,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * Save or update the athlete's custom goals & strategy notes.
+ */
+export async function saveDailyGoalsAction(
+  input: SaveDailyGoalsInput
+): Promise<{ success: boolean; goals: DailyGoalsData }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  const parseNumOrNull = (val: any): number | null => {
+    if (val === null || val === undefined || val === "") return null;
+    const n = Number(val);
+    return isNaN(n) ? null : n;
+  };
+
+  const parseStrOrNull = (val: any): string | null => {
+    if (val === null || val === undefined) return null;
+    const s = String(val).trim();
+    return s.length > 0 ? s : null;
+  };
+
+  const dataToSave = {
+    caloriesTarget: parseNumOrNull(input.caloriesTarget),
+    caloriesNotes: parseStrOrNull(input.caloriesNotes),
+    proteinMinGrams: parseNumOrNull(input.proteinMinGrams),
+    proteinMaxGrams: parseNumOrNull(input.proteinMaxGrams),
+    proteinNotes: parseStrOrNull(input.proteinNotes),
+    waterMinLiters: parseNumOrNull(input.waterMinLiters),
+    waterMaxLiters: parseNumOrNull(input.waterMaxLiters),
+    waterNotes: parseStrOrNull(input.waterNotes),
+    dailyWalkMinMinutes: parseNumOrNull(input.dailyWalkMinMinutes),
+    dailyWalkMaxMinutes: parseNumOrNull(input.dailyWalkMaxMinutes),
+    dailyWalkNotes: parseStrOrNull(input.dailyWalkNotes),
+    trainingDaysPerWeek: parseNumOrNull(input.trainingDaysPerWeek),
+    trainingNotes: parseStrOrNull(input.trainingNotes),
+    updatedAt: now,
+  };
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(athleteDailyGoals)
+      .set(dataToSave)
+      .where(eq(athleteDailyGoals.id, existing[0].id));
+  } else {
+    await db.insert(athleteDailyGoals).values({
+      id: crypto.randomUUID(),
+      userId,
+      ...dataToSave,
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+    });
+  }
+
+  const updatedGoals = await getDailyGoalsAction();
+  return { success: true, goals: updatedGoals };
+}
+
+/**
+ * Log or increment today's tracked metrics against the configured goals.
+ */
+export async function logDailyMetricAction(input: {
+  metric: "calories" | "protein" | "water" | "walk" | "training";
+  value: number | boolean;
+  mode?: "add" | "set";
+}): Promise<{ success: boolean; goals: DailyGoalsData }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  let existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    // Create initial row with blank targets
+    const newId = crypto.randomUUID();
+    await db.insert(athleteDailyGoals).values({
+      id: newId,
+      userId,
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+      updatedAt: now,
+    });
+    existing = await db
+      .select()
+      .from(athleteDailyGoals)
+      .where(eq(athleteDailyGoals.id, newId))
+      .limit(1);
+  }
+
+  const current = existing[0];
+  const mode = input.mode ?? "add";
+
+  const updates: Partial<AthleteDailyGoalsRow> = {
+    updatedAt: now,
+  };
+
+  switch (input.metric) {
+    case "calories": {
+      const num = Number(input.value) || 0;
+      updates.todayCalories = mode === "add" ? Math.max(0, (current.todayCalories ?? 0) + num) : Math.max(0, num);
+      break;
+    }
+    case "protein": {
+      const num = Number(input.value) || 0;
+      updates.todayProtein = mode === "add" ? Math.max(0, (current.todayProtein ?? 0) + num) : Math.max(0, num);
+      break;
+    }
+    case "water": {
+      const num = Number(input.value) || 0;
+      updates.todayWaterLiters =
+        mode === "add"
+          ? Math.max(0, Math.round(((current.todayWaterLiters ?? 0) + num) * 100) / 100)
+          : Math.max(0, Math.round(num * 100) / 100);
+      break;
+    }
+    case "walk": {
+      const num = Number(input.value) || 0;
+      updates.todayWalkMinutes = mode === "add" ? Math.max(0, (current.todayWalkMinutes ?? 0) + num) : Math.max(0, num);
+      break;
+    }
+    case "training": {
+      updates.todayTrainingCompleted = Boolean(input.value);
+      break;
+    }
+  }
+
+  await db
+    .update(athleteDailyGoals)
+    .set(updates)
+    .where(eq(athleteDailyGoals.id, current.id));
+
+  const updatedGoals = await getDailyGoalsAction();
+  return { success: true, goals: updatedGoals };
+}
+
+/**
+ * Reset today's tracking numbers to zero without altering targets.
+ */
+export async function resetDailyTrackingAction(): Promise<{ success: boolean; goals: DailyGoalsData }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.userId, userId));
+
+  const updatedGoals = await getDailyGoalsAction();
+  return { success: true, goals: updatedGoals };
+}
+
+/**
+ * Clear all goals and tracking back to a completely blank, unconfigured state.
+ */
+export async function clearAllGoalsAction(): Promise<{ success: boolean; goals: DailyGoalsData }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+
+  await db
+    .delete(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId));
+
+  const updatedGoals = await getDailyGoalsAction();
+  return { success: true, goals: updatedGoals };
 }
 
 

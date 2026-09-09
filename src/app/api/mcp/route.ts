@@ -128,6 +128,7 @@ export async function GET(request: Request) {
             "gym://mesocycle/summary",
             "gym://history/recent",
             "gym://chat/pending",
+            "gym://goals",
           ],
           tools: [
             "log_workout_set",
@@ -137,6 +138,8 @@ export async function GET(request: Request) {
             "generate_mesocycle",
             "swap_workout_order",
             "reply_to_chat_message",
+            "get_daily_goals",
+            "update_daily_goals",
           ],
         },
       },
