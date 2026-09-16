@@ -79,4 +79,46 @@ describe("Calories & Grams Tracking Engine", () => {
       expect(delRes.goals.todayCalories).toBe(0);
     }
   });
+
+  it("estimates macros accurately when weight is completely omitted (optional weight)", async () => {
+    // 1. Natural count: "4 eggs" without specifying grams
+    const eggs = await estimateFoodMacrosAction("4 eggs");
+    expect(eggs.matched).toBe(true);
+    expect(eggs.name).toBe("Egg");
+    expect(eggs.calories).toBe(288); // 4 * 72
+    expect(eggs.protein).toBe(24); // 4 * 6
+    expect(eggs.hasExplicitGrams).toBe(false);
+
+    // 2. Unit item: "banana" without grams
+    const banana = await estimateFoodMacrosAction("banana");
+    expect(banana.matched).toBe(true);
+    expect(banana.name).toBe("Banana");
+    expect(banana.calories).toBe(105);
+    expect(banana.hasExplicitGrams).toBe(false);
+
+    // 3. 100g item: "Chicken Breast" without grams uses standard serving (150g)
+    const chicken = await estimateFoodMacrosAction("Chicken Breast");
+    expect(chicken.matched).toBe(true);
+    expect(chicken.name).toBe("Chicken Breast");
+    expect(chicken.calories).toBe(248); // (150 / 100) * 165
+    expect(chicken.protein).toBe(46.5);
+    expect(chicken.hasExplicitGrams).toBe(false);
+  });
+
+  it("logs food without grams and updates todayCalories properly", async () => {
+    await resetDailyTrackingAction();
+
+    const logRes = await logNaturalEntryAction({
+      text: "4 Eggs",
+      calories: 288,
+      protein: 24,
+    });
+
+    expect(logRes.success).toBe(true);
+    expect(logRes.goals.todayCalories).toBe(288);
+    expect(logRes.goals.todayProtein).toBe(24);
+
+    const goals = await getDailyGoalsAction();
+    expect(goals.todayCalories).toBe(288);
+  });
 });

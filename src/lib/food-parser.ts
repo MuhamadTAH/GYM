@@ -439,6 +439,8 @@ export interface EstimatedMacroResult {
   name: string;
   emoji: string;
   grams: number;
+  portionDesc?: string;
+  hasExplicitGrams: boolean;
   calories: number;
   protein: number;
   carbs: number;
@@ -446,11 +448,36 @@ export interface EstimatedMacroResult {
 }
 
 /**
- * Calculates estimated calories, protein, carbs, and fat for a given food name and gram weight
+ * Calculates estimated calories, protein, carbs, and fat for a given food name.
+ * Gram weight is completely optional. If omitted, uses natural item quantity (e.g. 4 eggs)
+ * or standard portion sizes (e.g. 1 breast, 1 banana, 1 serving).
  */
 export function estimateFoodMacros(foodName: string, grams?: number): EstimatedMacroResult {
   const norm = foodName.toLowerCase().trim();
-  const targetGrams = grams && grams > 0 ? grams : 100;
+  if (!norm) {
+    return {
+      matched: false,
+      name: "",
+      emoji: "🍽️",
+      grams: 0,
+      hasExplicitGrams: false,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+    };
+  }
+
+  // Check if grams was explicitly in the foodName string (e.g. "200g chicken")
+  const gramsMatch = norm.match(/(\d+(?:\.\d+)?)\s*(?:g|grams?|غرام)\b/i);
+  const explicitGrams = grams && grams > 0 ? grams : gramsMatch ? parseFloat(gramsMatch[1]) : undefined;
+  const hasExplicitGrams = explicitGrams !== undefined;
+
+  // Check for quantity in foodName (e.g. "4 eggs", "2 bananas", "3 dates")
+  const quantity = extractQuantity(norm);
+
+  // Check direct macros (e.g. "500 kcal 30g protein")
+  const direct = extractDirectMacros(norm);
 
   // Find all matching foods and choose the one with the longest matching alias (most specific match)
   let bestMatch: { food: (typeof FOOD_DATABASE)[number]; alias: string } | null = null;
@@ -470,70 +497,105 @@ export function estimateFoodMacros(foodName: string, grams?: number): EstimatedM
     const food = bestMatch.food;
     let calories = 0;
     let protein = 0;
+    let portionDesc = "";
+    let calculatedGrams = 0;
 
-    if (food.unitType === "100g") {
-      calories = Math.round((targetGrams / 100) * food.caloriesPerUnit);
-      protein = Math.round((targetGrams / 100) * food.proteinPerUnit * 10) / 10;
-    } else if (food.unitType === "unit") {
-      const unitWeight = food.defaultServingGrams || 50;
-      const units = targetGrams / unitWeight;
-      calories = Math.round(units * food.caloriesPerUnit);
-      protein = Math.round(units * food.proteinPerUnit * 10) / 10;
+    if (explicitGrams !== undefined) {
+      calculatedGrams = explicitGrams;
+      if (food.unitType === "100g") {
+        calories = Math.round((explicitGrams / 100) * food.caloriesPerUnit);
+        protein = Math.round((explicitGrams / 100) * food.proteinPerUnit * 10) / 10;
+      } else if (food.unitType === "unit") {
+        const unitWeight = food.defaultServingGrams || 50;
+        const units = explicitGrams / unitWeight;
+        calories = Math.round(units * food.caloriesPerUnit);
+        protein = Math.round(units * food.proteinPerUnit * 10) / 10;
+      } else {
+        // serving
+        const servingWeight = food.defaultServingGrams || 150;
+        const servings = explicitGrams / servingWeight;
+        calories = Math.round(servings * food.caloriesPerUnit);
+        protein = Math.round(servings * food.proteinPerUnit * 10) / 10;
+      }
+      portionDesc = `${explicitGrams}g`;
     } else {
-      // serving
-      const servingWeight = food.defaultServingGrams || 150;
-      const servings = targetGrams / servingWeight;
-      calories = Math.round(servings * food.caloriesPerUnit);
-      protein = Math.round(servings * food.proteinPerUnit * 10) / 10;
+      // Weight in grams is OPTIONAL: Use natural unit quantity or default standard serving
+      if (food.unitType === "unit") {
+        const units = quantity && quantity < 30 ? quantity : (food.defaultServingUnits || 1);
+        calories = Math.round(units * food.caloriesPerUnit);
+        protein = Math.round(units * food.proteinPerUnit * 10) / 10;
+        calculatedGrams = Math.round(units * (food.defaultServingGrams || 50));
+        portionDesc = units === 1 ? `1 ${food.displayName}` : `${units} ${food.displayName}s`;
+      } else if (food.unitType === "serving") {
+        const servings = quantity && quantity < 10 ? quantity : (food.defaultServingUnits || 1);
+        calories = Math.round(servings * food.caloriesPerUnit);
+        protein = Math.round(servings * food.proteinPerUnit * 10) / 10;
+        calculatedGrams = Math.round(servings * (food.defaultServingGrams || 150));
+        portionDesc = servings === 1 ? `1 serving` : `${servings} servings`;
+      } else {
+        // 100g unitType (e.g. Chicken Breast, Beef, Rice)
+        const servingGrams = food.defaultServingGrams || 150;
+        calculatedGrams = servingGrams;
+        calories = Math.round((servingGrams / 100) * food.caloriesPerUnit);
+        protein = Math.round((servingGrams / 100) * food.proteinPerUnit * 10) / 10;
+        portionDesc = `1 serving (~${servingGrams}g)`;
+      }
     }
 
-        const proteinCal = protein * 4;
-        const remainingCal = Math.max(0, calories - proteinCal);
-        let carbs = 0;
-        let fat = 0;
+    // Direct macros override if explicitly stated in text
+    if (direct.calories > 0) calories = direct.calories;
+    if (direct.protein > 0) protein = direct.protein;
 
-        const nameLower = food.displayName.toLowerCase();
-        if (
-          nameLower.includes("rice") ||
-          nameLower.includes("oat") ||
-          nameLower.includes("bread") ||
-          nameLower.includes("potato") ||
-          nameLower.includes("pasta") ||
-          nameLower.includes("banana") ||
-          nameLower.includes("apple")
-        ) {
-          carbs = Math.round((remainingCal * 0.85) / 4);
-          fat = Math.round((remainingCal * 0.15) / 9);
-        } else if (
-          nameLower.includes("oil") ||
-          nameLower.includes("butter") ||
-          nameLower.includes("peanut butter") ||
-          nameLower.includes("nuts") ||
-          nameLower.includes("cheese") ||
-          nameLower.includes("avocado")
-        ) {
-          fat = Math.round((remainingCal * 0.85) / 9);
-          carbs = Math.round((remainingCal * 0.15) / 4);
-        } else {
-          fat = Math.round((remainingCal * 0.6) / 9);
-          carbs = Math.round((remainingCal * 0.4) / 4);
-        }
+    const proteinCal = protein * 4;
+    const remainingCal = Math.max(0, calories - proteinCal);
+    let carbs = 0;
+    let fat = 0;
 
-        return {
-          matched: true,
-          name: food.displayName,
-          emoji: food.emoji,
-          grams: targetGrams,
-          calories,
-          protein,
-          carbs,
-          fat,
-        };
+    const nameLower = food.displayName.toLowerCase();
+    if (
+      nameLower.includes("rice") ||
+      nameLower.includes("oat") ||
+      nameLower.includes("bread") ||
+      nameLower.includes("potato") ||
+      nameLower.includes("pasta") ||
+      nameLower.includes("banana") ||
+      nameLower.includes("apple")
+    ) {
+      carbs = Math.round((remainingCal * 0.85) / 4);
+      fat = Math.round((remainingCal * 0.15) / 9);
+    } else if (
+      nameLower.includes("oil") ||
+      nameLower.includes("butter") ||
+      nameLower.includes("peanut butter") ||
+      nameLower.includes("nuts") ||
+      nameLower.includes("cheese") ||
+      nameLower.includes("avocado")
+    ) {
+      fat = Math.round((remainingCal * 0.85) / 9);
+      carbs = Math.round((remainingCal * 0.15) / 4);
+    } else {
+      fat = Math.round((remainingCal * 0.6) / 9);
+      carbs = Math.round((remainingCal * 0.4) / 4);
+    }
+
+    return {
+      matched: true,
+      name: food.displayName,
+      emoji: food.emoji,
+      grams: calculatedGrams,
+      portionDesc,
+      hasExplicitGrams,
+      calories,
+      protein,
+      carbs,
+      fat,
+    };
   }
 
-  // Fallback for custom foods: ~1.5 kcal/g, 10% protein, 18% carbs, 4% fat
-  const calories = Math.round(targetGrams * 1.5);
-  const protein = Math.round(targetGrams * 0.1 * 10) / 10;
+  // Fallback for custom foods:
+  const targetGrams = explicitGrams || 150;
+  const calories = direct.calories > 0 ? direct.calories : Math.round(targetGrams * 1.5);
+  const protein = direct.protein > 0 ? direct.protein : Math.round(targetGrams * 0.1 * 10) / 10;
   const carbs = Math.round(targetGrams * 0.18 * 10) / 10;
   const fat = Math.round(targetGrams * 0.04 * 10) / 10;
 
@@ -542,6 +604,8 @@ export function estimateFoodMacros(foodName: string, grams?: number): EstimatedM
     name: foodName.trim() || "Food Item",
     emoji: "🍽️",
     grams: targetGrams,
+    portionDesc: hasExplicitGrams ? `${targetGrams}g` : "1 standard portion",
+    hasExplicitGrams,
     calories,
     protein,
     carbs,

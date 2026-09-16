@@ -44,9 +44,9 @@ export function CaloriesDashboard() {
   // Active Logging Mode: "grams" (Name + Grams), "camera" (Image Scan), "quick" (Free Text)
   const [logMode, setLogMode] = useState<"grams" | "camera" | "quick">("grams");
 
-  // Mode 1: Food Name + Grams state
+  // Mode 1: Food Name + Grams state (Grams is completely optional)
   const [foodName, setFoodName] = useState("");
-  const [grams, setGrams] = useState<string>("150");
+  const [grams, setGrams] = useState<string>("");
   const [estimatedMacros, setEstimatedMacros] = useState<EstimatedMacroResult | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -98,7 +98,7 @@ export function CaloriesDashboard() {
       setEstimatedMacros(null);
       return;
     }
-    const gVal = parseFloat(grams) || 100;
+    const gVal = grams.trim() ? parseFloat(grams) : undefined;
     estimateFoodMacrosAction(trimmed, gVal).then((result) => {
       setEstimatedMacros(result);
     });
@@ -110,22 +110,31 @@ export function CaloriesDashboard() {
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
-  // 1. Log by Food Name & Grams
+  // 1. Log by Food Name & Grams (Grams weight is optional)
   const handleLogByGrams = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const name = foodName.trim();
     if (!name) {
-      showFeedback("Please enter a food name.", "error");
+      showFeedback("Please enter what you ate.", "error");
       return;
     }
 
-    const gVal = parseFloat(grams) || 100;
+    const gVal = grams.trim() ? parseFloat(grams) : undefined;
     const macros = estimatedMacros || (await estimateFoodMacrosAction(name, gVal));
+
+    let loggedText = name;
+    if (gVal && gVal > 0) {
+      loggedText = `${gVal}g ${macros.name || name}`;
+    } else if (macros.portionDesc) {
+      loggedText = `${macros.portionDesc}`;
+    } else {
+      loggedText = macros.name || name;
+    }
 
     startTransition(async () => {
       try {
         const res = await logNaturalEntryAction({
-          text: `${gVal}g ${macros.name || name}`,
+          text: loggedText,
           calories: macros.calories,
           protein: macros.protein,
         });
@@ -133,9 +142,9 @@ export function CaloriesDashboard() {
         if (res.success) {
           setGoals(res.goals);
           setFoodName("");
-          setGrams("150");
+          setGrams(""); // Keep weight empty/optional for the next meal
           setEstimatedMacros(null);
-          showFeedback(`Logged ${gVal}g ${macros.name || name} (+${macros.calories} kcal, +${macros.protein}g protein)`);
+          showFeedback(`Logged ${loggedText} (+${macros.calories} kcal, +${macros.protein}g protein)`);
         } else {
           showFeedback(res.message, "error");
         }
@@ -570,7 +579,7 @@ export function CaloriesDashboard() {
               }`}
             >
               <Scale className="w-3.5 h-3.5" />
-              <span>Food + Grams (g)</span>
+              <span>Food + Grams (Optional)</span>
             </button>
             <button
               type="button"
@@ -599,7 +608,7 @@ export function CaloriesDashboard() {
           </div>
         </div>
 
-        {/* TAB 1: FOOD NAME & GRAMS INPUT (MAIN REQUESTED FEATURE) */}
+        {/* TAB 1: FOOD NAME & GRAMS INPUT (OPTIONAL WEIGHT) */}
         {logMode === "grams" && (
           <form onSubmit={handleLogByGrams} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
@@ -617,7 +626,7 @@ export function CaloriesDashboard() {
                       setShowSuggestions(true);
                     }}
                     onFocus={() => setShowSuggestions(true)}
-                    placeholder="e.g. Chicken Breast, White Rice, Eggs, Oatmeal..."
+                    placeholder="e.g. Chicken Breast, White Rice, Eggs, Oatmeal, Apple..."
                     className="w-full bg-zinc-950 border border-zinc-750 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 font-sans focus:outline-none transition shadow-inner"
                   />
                   {foodName && (
@@ -657,11 +666,16 @@ export function CaloriesDashboard() {
                 )}
               </div>
 
-              {/* Grams (g) Input */}
+              {/* Grams (g) Input - OPTIONAL */}
               <div className="sm:col-span-4">
-                <label className="block text-xs font-mono text-zinc-400 mb-1.5">
-                  2. Weight in Grams (g)
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-mono text-zinc-400">
+                    2. Weight in Grams
+                  </label>
+                  <span className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
+                    OPTIONAL
+                  </span>
+                </div>
                 <div className="relative">
                   <input
                     type="number"
@@ -669,12 +683,23 @@ export function CaloriesDashboard() {
                     step="1"
                     value={grams}
                     onChange={(e) => setGrams(e.target.value)}
-                    placeholder="150"
+                    placeholder="e.g. 150 (optional)"
                     className="w-full bg-zinc-950 border border-zinc-750 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm text-zinc-100 font-mono focus:outline-none transition shadow-inner"
                   />
-                  <span className="absolute right-4 top-3 text-xs font-bold font-mono text-emerald-400">
-                    grams (g)
-                  </span>
+                  {grams ? (
+                    <button
+                      type="button"
+                      onClick={() => setGrams("")}
+                      className="absolute right-3 top-2.5 text-xs font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded-lg transition"
+                      title="Clear weight (make optional)"
+                    >
+                      Clear ✕
+                    </button>
+                  ) : (
+                    <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500 pointer-events-none">
+                      grams (opt)
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -682,15 +707,26 @@ export function CaloriesDashboard() {
             {/* Quick Gram Pills & Popular Food Tags */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[11px] font-mono text-zinc-500 mr-1">Quick Grams:</span>
+                <span className="text-[11px] font-mono text-zinc-500 mr-1">Weight:</span>
+                <button
+                  type="button"
+                  onClick={() => setGrams("")}
+                  className={`text-[11px] font-mono px-2.5 py-1 rounded-lg border transition ${
+                    !grams.trim()
+                      ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold"
+                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                  }`}
+                >
+                  Auto (No Weight)
+                </button>
                 {[50, 100, 150, 200, 250, 300].map((g) => (
                   <button
                     key={g}
                     type="button"
-                    onClick={() => setGrams(g.toString())}
+                    onClick={() => setGrams(grams === g.toString() ? "" : g.toString())}
                     className={`text-[11px] font-mono px-2.5 py-1 rounded-lg border transition ${
                       grams === g.toString()
-                        ? "bg-emerald-500/20 border-emerald-400 text-emerald-300"
+                        ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold"
                         : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
                     }`}
                   >
@@ -702,17 +738,17 @@ export function CaloriesDashboard() {
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[11px] font-mono text-zinc-500 mr-1">Staples:</span>
                 {[
-                  { name: "Chicken Breast", g: 150 },
-                  { name: "White Rice", g: 150 },
-                  { name: "Eggs", g: 100 },
-                  { name: "Oatmeal", g: 50 },
+                  { name: "Chicken Breast" },
+                  { name: "White Rice" },
+                  { name: "Eggs" },
+                  { name: "Oatmeal" },
+                  { name: "Banana" },
                 ].map((s) => (
                   <button
                     key={s.name}
                     type="button"
                     onClick={() => {
                       setFoodName(s.name);
-                      setGrams(s.g.toString());
                       setShowSuggestions(false);
                     }}
                     className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 border border-zinc-750 transition"
@@ -730,9 +766,13 @@ export function CaloriesDashboard() {
                   <span className="text-2xl">{estimatedMacros.emoji}</span>
                   <div>
                     <div className="text-xs font-bold text-zinc-200 flex items-center gap-2">
-                      <span>{grams}g {estimatedMacros.name}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">
-                        ESTIMATED
+                      <span>
+                        {grams.trim()
+                          ? `${grams}g ${estimatedMacros.name}`
+                          : estimatedMacros.portionDesc || estimatedMacros.name}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
+                        {grams.trim() ? "EXACT GRAMS" : "PORTION ESTIMATE"}
                       </span>
                     </div>
                     <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-3 mt-0.5">
@@ -750,7 +790,11 @@ export function CaloriesDashboard() {
                   className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-500/20"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Log {grams}g ({estimatedMacros.calories} kcal)</span>
+                  <span>
+                    {grams.trim()
+                      ? `Log ${grams}g (${estimatedMacros.calories} kcal)`
+                      : `Log ${estimatedMacros.name || foodName} (${estimatedMacros.calories} kcal)`}
+                  </span>
                 </button>
               </div>
             )}
@@ -762,7 +806,7 @@ export function CaloriesDashboard() {
                   disabled={true}
                   className="w-full py-3 rounded-xl bg-zinc-800 text-zinc-500 font-bold text-xs font-mono flex items-center justify-center gap-2 cursor-not-allowed"
                 >
-                  <span>Type food name and weight to log calories</span>
+                  <span>Type what you ate to log calories (grams weight is optional)</span>
                 </button>
               </div>
             )}
