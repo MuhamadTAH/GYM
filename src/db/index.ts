@@ -136,6 +136,23 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
+
+CREATE TABLE IF NOT EXISTS exercises (
+	id text PRIMARY KEY NOT NULL,
+	name text NOT NULL,
+	normalized_name text NOT NULL,
+	target_muscle text NOT NULL,
+	secondary_muscles text,
+	body_part text,
+	equipment text,
+	animation_url text,
+	thumbnail_url text,
+	instructions text,
+	coaching_cues text,
+	form_warnings text,
+	created_at text NOT NULL,
+	updated_at text NOT NULL
+);
 `;
 
 const columnMigrations = [

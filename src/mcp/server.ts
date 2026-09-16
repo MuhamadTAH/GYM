@@ -27,6 +27,10 @@ import {
   getRecommendedMonthlyPlanAction,
   logNaturalEntryAction,
   deleteLoggedItemAction,
+  getExerciseGuideAction,
+  getDailyBriefingAction,
+  dispatchDailyBriefingAction,
+  scanMealImageAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -100,6 +104,13 @@ export function registerHandlers(server: Server) {
           "Returns the athlete's configured daily targets (Calories, Protein, Water, Daily Walk, Training Adherence), 7-day weekly split schedule, and 4-week monthly mesocycle roadmap, along with today's logged status.",
         mimeType: "application/json",
       },
+      {
+        uri: "gym://briefing/today",
+        name: "Daily Morning Workout & Nutrition Briefing",
+        description:
+          "Returns today's morning briefing: whether today is a scheduled training session (with prescribed movements, sets, rep ranges, cues) or active recovery, plus target calories, protein, hydration, and walk duration.",
+        mimeType: "application/json",
+      },
     ],
   };
 });
@@ -109,6 +120,19 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   console.error(`[MCP:gym-engine] Reading resource: ${uri}`);
 
   switch (uri) {
+    case "gym://briefing/today": {
+      const briefing = await getDailyBriefingAction();
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(briefing, null, 2),
+          },
+        ],
+      };
+    }
+
     case "gym://goals": {
       const goals = await getDailyGoalsAction();
       return {
@@ -576,6 +600,73 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["item_id"],
         },
       },
+      {
+        name: "get_exercise_guide",
+        description:
+          "Retrieve movement animations (GIF & thumbnail), primary target muscle, secondary muscles, setup coaching cues, and common form breakdown warnings for an exercise.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            exercise_name: {
+              type: "string",
+              description:
+                "Name of the exercise (e.g. 'bench_press', 'squat', 'deadlift', 'barbell_row', 'overhead_press', 'pull_up', 'dumbbell_lateral_raise', 'cable_pushdown').",
+            },
+          },
+          required: ["exercise_name"],
+        },
+      },
+      {
+        name: "get_daily_morning_briefing",
+        description:
+          "Retrieve the athlete's structured daily morning briefing detailing whether today is a prescribed workout (with 5 movements, target loads, 10-12 rep targets, and cues) or rest & recovery, plus target calories, protein, water, and walk duration.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "dispatch_morning_briefing",
+        description:
+          "Dispatch the athlete's daily morning briefing to an external webhook or Telegram bot notification.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            webhook_url: {
+              type: "string",
+              description: "Optional destination webhook URL to POST briefing JSON payload to.",
+            },
+            telegram_token: {
+              type: "string",
+              description: "Optional Telegram Bot token.",
+            },
+            telegram_chat_id: {
+              type: "string",
+              description: "Optional Telegram chat ID.",
+            },
+          },
+        },
+      },
+      {
+        name: "scan_meal_image",
+        description:
+          "Analyze a meal photo using computer vision / Gemini Vision model to segment plate items, estimate volumetric grams, and calculate total calories and protein.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            image: {
+              type: "string",
+              description: "Base64-encoded meal photo string.",
+            },
+            mime_type: {
+              type: "string",
+              description: "Image MIME type (image/jpeg, image/png, image/webp). Defaults to image/jpeg.",
+              default: "image/jpeg",
+            },
+          },
+          required: ["image"],
+        },
+      },
     ],
   };
 });
@@ -981,6 +1072,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const result = await deleteLoggedItemAction(itemId);
 
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_exercise_guide": {
+        const exerciseName = String(args?.exercise_name || "").trim();
+        if (!exerciseName) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_name'.");
+        }
+        const guide = await getExerciseGuideAction(exerciseName);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(guide, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "get_daily_morning_briefing": {
+        const briefing = await getDailyBriefingAction();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(briefing, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "dispatch_morning_briefing": {
+        const webhookUrl = args?.webhook_url ? String(args.webhook_url).trim() : undefined;
+        const telegramToken = args?.telegram_token ? String(args.telegram_token).trim() : undefined;
+        const telegramChatId = args?.telegram_chat_id ? String(args.telegram_chat_id).trim() : undefined;
+        const result = await dispatchDailyBriefingAction({ webhookUrl, telegramToken, telegramChatId });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "scan_meal_image": {
+        const image = String(args?.image || "").trim();
+        if (!image) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'image'.");
+        }
+        const mimeType = String(args?.mime_type || "image/jpeg").trim();
+        const result = await scanMealImageAction(image, mimeType);
         return {
           content: [
             {

@@ -71,7 +71,7 @@ interface FoodReference {
   displayName: string;
 }
 
-const FOOD_DATABASE: FoodReference[] = [
+export const FOOD_DATABASE: FoodReference[] = [
   // Eggs
   {
     aliases: ["egg", "eggs", "boiled egg", "boiled eggs", "fried egg", "fried eggs", "scrambled egg", "scrambled eggs", "omelet", "omelette", "بيض", "بيضات"],
@@ -330,12 +330,224 @@ const FOOD_DATABASE: FoodReference[] = [
     aliases: ["nuts", "almonds", "walnuts", "مكسرات", "لوز", "جوز"],
     unitType: "serving", // 1 handful (30g)
     defaultServingUnits: 1,
+    defaultServingGrams: 30,
     caloriesPerUnit: 170,
     proteinPerUnit: 6,
     emoji: "🥜",
     displayName: "Nuts (handful)",
   },
+  {
+    aliases: ["shawarma", "chicken shawarma", "beef shawarma", "شاورما", "كص"],
+    unitType: "100g",
+    defaultServingGrams: 150,
+    caloriesPerUnit: 215,
+    proteinPerUnit: 18,
+    emoji: "🌯",
+    displayName: "Shawarma",
+  },
+  {
+    aliases: ["kebab", "kabab", "kafta", "كباب", "كفتة"],
+    unitType: "100g",
+    defaultServingGrams: 150,
+    caloriesPerUnit: 230,
+    proteinPerUnit: 20,
+    emoji: "🍢",
+    displayName: "Kebab",
+  },
+  {
+    aliases: ["falafel", "فلافل"],
+    unitType: "unit",
+    defaultServingUnits: 4,
+    defaultServingGrams: 100,
+    caloriesPerUnit: 57,
+    proteinPerUnit: 2.3,
+    emoji: "🧆",
+    displayName: "Falafel",
+  },
+  {
+    aliases: ["hummus", "hummous", "حمص بطحينة"],
+    unitType: "100g",
+    defaultServingGrams: 50,
+    caloriesPerUnit: 166,
+    proteinPerUnit: 8,
+    emoji: "🥣",
+    displayName: "Hummus",
+  },
+  {
+    aliases: ["avocado", "افوكادو"],
+    unitType: "unit",
+    defaultServingUnits: 1,
+    defaultServingGrams: 150,
+    caloriesPerUnit: 160,
+    proteinPerUnit: 2,
+    emoji: "🥑",
+    displayName: "Avocado",
+  },
+  {
+    aliases: ["protein bar", "protein snack", "بروتين بار"],
+    unitType: "unit",
+    defaultServingUnits: 1,
+    defaultServingGrams: 60,
+    caloriesPerUnit: 210,
+    proteinPerUnit: 20,
+    emoji: "🍫",
+    displayName: "Protein Bar",
+  },
+  {
+    aliases: ["olive oil", "oil", "زيت زيتون", "زيت"],
+    unitType: "unit",
+    defaultServingUnits: 1,
+    defaultServingGrams: 15,
+    caloriesPerUnit: 120,
+    proteinPerUnit: 0,
+    emoji: "🫒",
+    displayName: "Olive Oil (tbsp)",
+  },
+  {
+    aliases: ["pizza", "slice of pizza", "بيتزا"],
+    unitType: "unit",
+    defaultServingUnits: 1,
+    defaultServingGrams: 107,
+    caloriesPerUnit: 280,
+    proteinPerUnit: 12,
+    emoji: "🍕",
+    displayName: "Pizza Slice",
+  },
+  {
+    aliases: ["burger", "cheeseburger", "hamburger", "برغر", "همبرغر"],
+    unitType: "unit",
+    defaultServingUnits: 1,
+    defaultServingGrams: 220,
+    caloriesPerUnit: 520,
+    proteinPerUnit: 28,
+    emoji: "🍔",
+    displayName: "Burger",
+  },
+  {
+    aliases: ["shrimp", "prawns", "روبيان", "جمبري"],
+    unitType: "100g",
+    defaultServingGrams: 150,
+    caloriesPerUnit: 99,
+    proteinPerUnit: 24,
+    emoji: "🦐",
+    displayName: "Shrimp",
+  },
 ];
+
+export interface EstimatedMacroResult {
+  matched: boolean;
+  name: string;
+  emoji: string;
+  grams: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+/**
+ * Calculates estimated calories, protein, carbs, and fat for a given food name and gram weight
+ */
+export function estimateFoodMacros(foodName: string, grams?: number): EstimatedMacroResult {
+  const norm = foodName.toLowerCase().trim();
+  const targetGrams = grams && grams > 0 ? grams : 100;
+
+  // Find all matching foods and choose the one with the longest matching alias (most specific match)
+  let bestMatch: { food: (typeof FOOD_DATABASE)[number]; alias: string } | null = null;
+
+  for (const food of FOOD_DATABASE) {
+    for (const alias of food.aliases) {
+      const aliasLower = alias.toLowerCase();
+      if (norm === aliasLower || norm.includes(aliasLower) || aliasLower.includes(norm)) {
+        if (!bestMatch || aliasLower.length > bestMatch.alias.length) {
+          bestMatch = { food, alias: aliasLower };
+        }
+      }
+    }
+  }
+
+  if (bestMatch) {
+    const food = bestMatch.food;
+    let calories = 0;
+    let protein = 0;
+
+    if (food.unitType === "100g") {
+      calories = Math.round((targetGrams / 100) * food.caloriesPerUnit);
+      protein = Math.round((targetGrams / 100) * food.proteinPerUnit * 10) / 10;
+    } else if (food.unitType === "unit") {
+      const unitWeight = food.defaultServingGrams || 50;
+      const units = targetGrams / unitWeight;
+      calories = Math.round(units * food.caloriesPerUnit);
+      protein = Math.round(units * food.proteinPerUnit * 10) / 10;
+    } else {
+      // serving
+      const servingWeight = food.defaultServingGrams || 150;
+      const servings = targetGrams / servingWeight;
+      calories = Math.round(servings * food.caloriesPerUnit);
+      protein = Math.round(servings * food.proteinPerUnit * 10) / 10;
+    }
+
+        const proteinCal = protein * 4;
+        const remainingCal = Math.max(0, calories - proteinCal);
+        let carbs = 0;
+        let fat = 0;
+
+        const nameLower = food.displayName.toLowerCase();
+        if (
+          nameLower.includes("rice") ||
+          nameLower.includes("oat") ||
+          nameLower.includes("bread") ||
+          nameLower.includes("potato") ||
+          nameLower.includes("pasta") ||
+          nameLower.includes("banana") ||
+          nameLower.includes("apple")
+        ) {
+          carbs = Math.round((remainingCal * 0.85) / 4);
+          fat = Math.round((remainingCal * 0.15) / 9);
+        } else if (
+          nameLower.includes("oil") ||
+          nameLower.includes("butter") ||
+          nameLower.includes("peanut butter") ||
+          nameLower.includes("nuts") ||
+          nameLower.includes("cheese") ||
+          nameLower.includes("avocado")
+        ) {
+          fat = Math.round((remainingCal * 0.85) / 9);
+          carbs = Math.round((remainingCal * 0.15) / 4);
+        } else {
+          fat = Math.round((remainingCal * 0.6) / 9);
+          carbs = Math.round((remainingCal * 0.4) / 4);
+        }
+
+        return {
+          matched: true,
+          name: food.displayName,
+          emoji: food.emoji,
+          grams: targetGrams,
+          calories,
+          protein,
+          carbs,
+          fat,
+        };
+  }
+
+  // Fallback for custom foods: ~1.5 kcal/g, 10% protein, 18% carbs, 4% fat
+  const calories = Math.round(targetGrams * 1.5);
+  const protein = Math.round(targetGrams * 0.1 * 10) / 10;
+  const carbs = Math.round(targetGrams * 0.18 * 10) / 10;
+  const fat = Math.round(targetGrams * 0.04 * 10) / 10;
+
+  return {
+    matched: false,
+    name: foodName.trim() || "Food Item",
+    emoji: "🍽️",
+    grams: targetGrams,
+    calories,
+    protein,
+    carbs,
+    fat,
+  };
+}
 
 /**
  * Extracts numeric quantity from text or word numbers
@@ -513,56 +725,76 @@ function parseSingleFoodClause(clause: string): ParsedItemResult | null {
   const normalized = clause.toLowerCase().trim();
   if (!normalized) return null;
 
+  // Check for direct macros mentions (e.g. "pizza 500 kcal 30g protein")
+  const direct = extractDirectMacros(clause);
+
   // Direct grams match e.g. "200g chicken breast" or "chicken 150g"
   const gramsMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:g|grams?|غرام)\b/i);
   const gramsSpecified = gramsMatch ? parseFloat(gramsMatch[1]) : null;
 
-  // Match known food items
+  // Match known food items with longest matching alias winning
+  let bestMatch: { food: (typeof FOOD_DATABASE)[number]; alias: string } | null = null;
+
   for (const food of FOOD_DATABASE) {
     for (const alias of food.aliases) {
       const regex = new RegExp(`\\b${alias}\\b`, "i");
       if (regex.test(normalized)) {
-        let quantity = extractQuantity(normalized);
-        let calculatedCalories = 0;
-        let calculatedProtein = 0;
-        let portionDesc = "";
-
-        if (food.unitType === "100g") {
-          const grams = gramsSpecified || (quantity && quantity >= 30 ? quantity : food.defaultServingGrams || 150);
-          calculatedCalories = Math.round((grams / 100) * food.caloriesPerUnit);
-          calculatedProtein = Math.round((grams / 100) * food.proteinPerUnit * 10) / 10;
-          portionDesc = `${grams}g`;
-        } else if (food.unitType === "unit") {
-          const units = quantity && quantity < 30 ? quantity : (food.defaultServingUnits || 1);
-          calculatedCalories = Math.round(units * food.caloriesPerUnit);
-          calculatedProtein = Math.round(units * food.proteinPerUnit * 10) / 10;
-          portionDesc = `${units}x`;
-        } else {
-          // serving
-          const servings = quantity && quantity < 10 ? quantity : (food.defaultServingUnits || 1);
-          calculatedCalories = Math.round(servings * food.caloriesPerUnit);
-          calculatedProtein = Math.round(servings * food.proteinPerUnit * 10) / 10;
-          portionDesc = servings === 1 ? "1 serving" : `${servings} servings`;
+        if (!bestMatch || alias.length > bestMatch.alias.length) {
+          bestMatch = { food, alias };
         }
-
-        return {
-          raw: clause,
-          name: food.displayName,
-          category: "food",
-          calories: calculatedCalories,
-          protein: calculatedProtein,
-          waterLiters: 0,
-          walkMinutes: 0,
-          trainingCompleted: false,
-          summary: `${food.emoji} ${portionDesc} ${food.displayName} (+${calculatedCalories} kcal, +${calculatedProtein}g protein)`,
-        };
       }
     }
   }
 
+  if (bestMatch) {
+    const food = bestMatch.food;
+    let quantity = extractQuantity(normalized);
+    let calculatedCalories = 0;
+    let calculatedProtein = 0;
+    let portionDesc = "";
+
+    if (food.unitType === "100g") {
+      const grams = gramsSpecified || (quantity && quantity >= 30 ? quantity : food.defaultServingGrams || 150);
+      calculatedCalories = Math.round((grams / 100) * food.caloriesPerUnit);
+      calculatedProtein = Math.round((grams / 100) * food.proteinPerUnit * 10) / 10;
+      portionDesc = `${grams}g`;
+    } else if (food.unitType === "unit") {
+      const units = quantity && quantity < 30 ? quantity : (food.defaultServingUnits || 1);
+      calculatedCalories = Math.round(units * food.caloriesPerUnit);
+      calculatedProtein = Math.round(units * food.proteinPerUnit * 10) / 10;
+      portionDesc = `${units}x`;
+    } else {
+      // serving
+      const servings = quantity && quantity < 10 ? quantity : (food.defaultServingUnits || 1);
+      calculatedCalories = Math.round(servings * food.caloriesPerUnit);
+      calculatedProtein = Math.round(servings * food.proteinPerUnit * 10) / 10;
+      portionDesc = servings === 1 ? "1 serving" : `${servings} servings`;
+    }
+
+    // Direct macros override if explicitly stated in text
+    if (direct.calories > 0) calculatedCalories = direct.calories;
+    if (direct.protein > 0) calculatedProtein = direct.protein;
+
+    const summaryParts: string[] = [];
+    if (portionDesc && direct.calories === 0) summaryParts.push(portionDesc);
+    summaryParts.push(food.displayName);
+    summaryParts.push(`(+${calculatedCalories} kcal, +${calculatedProtein}g protein)`);
+
+    return {
+      raw: clause,
+      name: food.displayName,
+      category: "food",
+      calories: calculatedCalories,
+      protein: calculatedProtein,
+      waterLiters: 0,
+      walkMinutes: 0,
+      trainingCompleted: false,
+      summary: `${food.emoji} ${summaryParts.join(" ")}`,
+    };
+  }
+
   // Fallback: Check if direct macros were mentioned in this clause without matching a food item
   // e.g. "burger 500 kcal 30g protein" or "pizza 600 cal"
-  const direct = extractDirectMacros(clause);
   if (direct.calories > 0 || direct.protein > 0) {
     // Extract a friendly name from the text
     const cleanName = clause

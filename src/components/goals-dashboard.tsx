@@ -23,7 +23,9 @@ import {
   Check,
   Send,
   Zap,
+  Camera,
 } from "lucide-react";
+import { MealScanModal } from "./meal-scan-modal";
 import {
   getDailyGoalsAction,
   saveDailyGoalsAction,
@@ -41,6 +43,7 @@ import type { LoggedItem, WeeklySplitDay, MonthlyPhase } from "@/db/schema";
 export function GoalsDashboard() {
   const [goals, setGoals] = useState<DailyGoalsData | null>(null);
   const [naturalInput, setNaturalInput] = useState("");
+  const [isMealScanOpen, setIsMealScanOpen] = useState(false);
   const [activePlanTab, setActivePlanTab] = useState<"weekly" | "monthly" | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -440,10 +443,20 @@ export function GoalsDashboard() {
             <button
               type="submit"
               disabled={isPending || !naturalInput.trim()}
-              className="px-5 py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 text-black font-black text-sm rounded-xl flex items-center gap-2 transition-all shrink-0 font-mono shadow-lg shadow-emerald-500/20"
+              className="px-5 py-3.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:hover:bg-emerald-500 text-black font-black text-sm rounded-xl flex items-center gap-2 transition-all shrink-0 font-mono shadow-lg shadow-emerald-500/20 cursor-pointer"
             >
               <Send className="w-4 h-4" />
               <span>LOG</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsMealScanOpen(true)}
+              className="px-4 py-3.5 bg-purple-600/90 hover:bg-purple-500 text-white font-bold text-sm rounded-xl flex items-center gap-2 transition-all shrink-0 font-mono shadow-lg shadow-purple-600/20 cursor-pointer"
+              title="Scan meal with camera or upload photo"
+            >
+              <Camera className="w-4 h-4" />
+              <span className="hidden sm:inline">SCAN MEAL</span>
             </button>
           </form>
 
@@ -1097,6 +1110,16 @@ export function GoalsDashboard() {
           </div>
         </div>
       )}
+
+      {/* Multimodal Meal Scanner Modal */}
+      <MealScanModal
+        isOpen={isMealScanOpen}
+        onClose={() => setIsMealScanOpen(false)}
+        onLoggedSuccess={(msg) => {
+          setStatusMessage({ text: msg, type: "success" });
+          refreshGoals();
+        }}
+      />
     </div>
   );
 }

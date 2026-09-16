@@ -265,3 +265,25 @@ export interface MonthlyPhase {
 export type AthleteDailyGoalsRow = typeof athleteDailyGoals.$inferSelect;
 export type InsertAthleteDailyGoalsRow = typeof athleteDailyGoals.$inferInsert;
 
+/**
+ * CORE RELATIONAL TABLE: exercises (Exercise Library, Animations & Form Cues)
+ */
+export const exercises = sqliteTable("exercises", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  normalizedName: text("normalized_name").notNull(),
+  targetMuscle: text("target_muscle").notNull(),
+  secondaryMuscles: text("secondary_muscles", { mode: "json" }).$type<string[]>(),
+  bodyPart: text("body_part"),
+  equipment: text("equipment"),
+  animationUrl: text("animation_url"),
+  thumbnailUrl: text("thumbnail_url"),
+  instructions: text("instructions", { mode: "json" }).$type<string[]>(),
+  coachingCues: text("coaching_cues", { mode: "json" }).$type<string[]>(),
+  formWarnings: text("form_warnings", { mode: "json" }).$type<string[]>(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type ExerciseRow = typeof exercises.$inferSelect;
+export type InsertExerciseRow = typeof exercises.$inferInsert;

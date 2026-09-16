@@ -129,6 +129,7 @@ export async function GET(request: Request) {
             "gym://history/recent",
             "gym://chat/pending",
             "gym://goals",
+            "gym://briefing/today",
           ],
           tools: [
             "log_workout_set",
@@ -146,6 +147,10 @@ export async function GET(request: Request) {
             "get_recommended_plans",
             "log_natural_entry",
             "delete_logged_entry",
+            "get_exercise_guide",
+            "get_daily_morning_briefing",
+            "dispatch_morning_briefing",
+            "scan_meal_image",
           ],
         },
       },

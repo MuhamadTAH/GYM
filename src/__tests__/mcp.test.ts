@@ -29,9 +29,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     await client.close();
   });
 
-  it("lists all 6 read-only resources with exact URIs", async () => {
+  it("lists all 7 read-only resources with exact URIs", async () => {
     const res = await client.listResources();
-    expect(res.resources).toHaveLength(6);
+    expect(res.resources).toHaveLength(7);
 
     const uris = res.resources.map((r) => r.uri);
     expect(uris).toContain("gym://profile");
@@ -40,6 +40,7 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(uris).toContain("gym://history/recent");
     expect(uris).toContain("gym://chat/pending");
     expect(uris).toContain("gym://goals");
+    expect(uris).toContain("gym://briefing/today");
   });
 
   it("reads gym://profile resource correctly", async () => {
@@ -107,9 +108,20 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(goals.userId).toBeDefined();
   });
 
-  it("lists all 15 action & state mutation tools", async () => {
+  it("reads gym://briefing/today resource correctly", async () => {
+    const res = await client.readResource({ uri: "gym://briefing/today" });
+    expect(res.contents).toHaveLength(1);
+
+    const textContent = res.contents[0] as { text: string };
+    const briefing = JSON.parse(textContent.text);
+    expect(briefing).toBeDefined();
+    expect(briefing.headline).toBeDefined();
+    expect(briefing.dailyTargets).toBeDefined();
+  });
+
+  it("lists all 19 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(15);
+    expect(res.tools).toHaveLength(19);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -127,6 +139,10 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("get_recommended_plans");
     expect(toolNames).toContain("log_natural_entry");
     expect(toolNames).toContain("delete_logged_entry");
+    expect(toolNames).toContain("get_exercise_guide");
+    expect(toolNames).toContain("get_daily_morning_briefing");
+    expect(toolNames).toContain("dispatch_morning_briefing");
+    expect(toolNames).toContain("scan_meal_image");
   });
 
   it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
@@ -313,4 +329,62 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(result.success).toBe(true);
     expect(result.nowActiveSession).toBeDefined();
   });
+
+  it("calls get_exercise_guide tool and returns movement animation and cues", async () => {
+    const res = await client.callTool({
+      name: "get_exercise_guide",
+      arguments: {
+        exercise_name: "bench_press",
+      },
+    });
+
+    expect(res.isError).toBeFalsy();
+    const guide = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(guide.name).toBe("Barbell Bench Press");
+    expect(guide.animationUrl).toContain(".gif");
+    expect(guide.coachingCues.length).toBeGreaterThan(0);
+    expect(guide.formWarnings.length).toBeGreaterThan(0);
+  });
+
+  it("calls get_daily_morning_briefing tool", async () => {
+    const res = await client.callTool({
+      name: "get_daily_morning_briefing",
+      arguments: {},
+    });
+
+    expect(res.isError).toBeFalsy();
+    const briefing = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(briefing.dayOfWeek).toBeDefined();
+    expect(briefing.dailyTargets).toBeDefined();
+    expect(briefing.headline).toBeDefined();
+  });
+
+  it("calls dispatch_morning_briefing tool", async () => {
+    const res = await client.callTool({
+      name: "dispatch_morning_briefing",
+      arguments: {},
+    });
+
+    expect(res.isError).toBeFalsy();
+    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(result.message).toBeDefined();
+  });
+
+  it("calls scan_meal_image tool via MCP", async () => {
+    const fakeBase64 = Buffer.from("plate-of-food-test").toString("base64");
+    const res = await client.callTool({
+      name: "scan_meal_image",
+      arguments: {
+        image: fakeBase64,
+        mime_type: "image/jpeg",
+      },
+    });
+
+    expect(res.isError).toBeFalsy();
+    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(result.success).toBe(true);
+    expect(result.meal).toBeDefined();
+    expect(result.meal.items.length).toBeGreaterThan(0);
+  });
 });
+

@@ -13,8 +13,12 @@ import {
   type LoggedItem,
 } from "@/db/schema";
 import { eq, desc, asc, and, ne, gte } from "drizzle-orm";
-import { parseNaturalTelemetry } from "@/lib/food-parser";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
+import {
+  parseNaturalTelemetry,
+  estimateFoodMacros,
+  type EstimatedMacroResult,
+} from "@/lib/food-parser";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
 import { calculateBrzycki1RM, calculateProgressiveOverload } from "@/lib/math";
 import {
@@ -34,6 +38,21 @@ import {
   type MacroBreakdown,
 } from "@/lib/nutrition";
 import type { BaselineLifts, ActiveInjury, PreferredUnit } from "@/schemas/fitness";
+import {
+  getExerciseGuide,
+  getAllExerciseGuides,
+  type ExerciseGuide,
+} from "@/lib/exercises-data";
+import {
+  getDailyMorningBriefing,
+  dispatchDailyMorningBriefing,
+  type DailyBriefingPayload,
+} from "@/lib/briefing";
+import {
+  scanMealImage,
+  getFallbackHeuristicEstimation,
+  type ScannedMealResponse,
+} from "@/lib/meal-scanner";
 
 export interface LoggedSetResponse {
   success: boolean;
@@ -1881,4 +1900,52 @@ export async function getRecommendedMonthlyPlanAction(): Promise<{
   };
 }
 
+/**
+ * ============================================================================
+ * EXERCISE GUIDE, MORNING BRIEFING & VISUAL MEAL SCANNING ACTIONS
+ * ============================================================================
+ */
 
+export async function getExerciseGuideAction(exerciseName: string): Promise<ExerciseGuide> {
+  return getExerciseGuide(exerciseName);
+}
+
+export async function getAllExercisesAction(): Promise<ExerciseGuide[]> {
+  return getAllExerciseGuides();
+}
+
+export async function getDailyBriefingAction(): Promise<DailyBriefingPayload> {
+  return getDailyMorningBriefing();
+}
+
+export async function dispatchDailyBriefingAction(options?: {
+  webhookUrl?: string;
+  telegramToken?: string;
+  telegramChatId?: string;
+}): Promise<{ dispatched: boolean; message: string; destination?: string }> {
+  const briefing = await getDailyMorningBriefing();
+  return dispatchDailyMorningBriefing(briefing, options);
+}
+
+export async function scanMealImageAction(
+  base64Image: string,
+  mimeType: string = "image/jpeg"
+): Promise<{ success: boolean; meal: ScannedMealResponse; error?: string }> {
+  try {
+    const meal = await scanMealImage(base64Image, mimeType);
+    return { success: true, meal };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      meal: getFallbackHeuristicEstimation(),
+      error: err instanceof Error ? err.message : "Failed to scan meal image",
+    };
+  }
+}
+
+export async function estimateFoodMacrosAction(
+  foodName: string,
+  grams?: number
+): Promise<EstimatedMacroResult> {
+  return estimateFoodMacros(foodName, grams);
+}
