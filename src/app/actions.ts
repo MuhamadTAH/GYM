@@ -17,8 +17,10 @@ import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import {
   parseNaturalTelemetry,
   estimateFoodMacros,
+  FOOD_DATABASE,
   type EstimatedMacroResult,
 } from "@/lib/food-parser";
+import { searchUsdaFoods, getUsdaFoodNutrition } from "@/lib/usda-database";
 import { resolveArbitration, type ArbitrationResult } from "@/lib/arbitration";
 import { calculateBrzycki1RM, calculateProgressiveOverload } from "@/lib/math";
 import {
@@ -1943,9 +1945,96 @@ export async function scanMealImageAction(
   }
 }
 
+export interface FoodSearchResultItem {
+  displayName: string;
+  emoji: string;
+  subtitle: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  defaultGrams?: number;
+  source: "curated" | "usda";
+}
+
+/**
+ * Autocomplete search across curated staples and the comprehensive USDA scientific food database
+ */
+export async function searchFoodDatabaseAction(query: string): Promise<FoodSearchResultItem[]> {
+  const q = query.trim().toLowerCase();
+  if (!q || q.length < 2) return [];
+
+  const results: FoodSearchResultItem[] = [];
+  const seenNames = new Set<string>();
+
+  // 1. Search curated staples (instant in-memory)
+  for (const food of FOOD_DATABASE) {
+    const nameMatch = food.displayName.toLowerCase().includes(q);
+    const aliasMatch = food.aliases.some((a) => a.toLowerCase().includes(q));
+    if (nameMatch || aliasMatch) {
+      seenNames.add(food.displayName.toLowerCase());
+      results.push({
+        displayName: food.displayName,
+        emoji: food.emoji,
+        subtitle: `~${food.caloriesPerUnit} kcal / ${food.unitType}`,
+        calories: food.caloriesPerUnit,
+        protein: food.proteinPerUnit,
+        carbs: 0,
+        fat: 0,
+        defaultGrams: food.defaultServingGrams,
+        source: "curated",
+      });
+    }
+  }
+
+  // 2. Search USDA Database (8,789 foods)
+  try {
+    const usdaMatches = await searchUsdaFoods(query, 8);
+    for (const match of usdaMatches) {
+      const cleanName = match.longDesc.split(",")[0].trim();
+      const lower = cleanName.toLowerCase();
+      if (!seenNames.has(lower)) {
+        seenNames.add(lower);
+        results.push({
+          displayName: cleanName,
+          emoji: match.emoji,
+          subtitle: match.defaultServingDesc
+            ? `${match.caloriesPer100g} kcal/100g • ${match.defaultServingDesc}`
+            : `${match.caloriesPer100g} kcal / 100g`,
+          calories: match.caloriesPer100g,
+          protein: match.proteinPer100g,
+          carbs: match.carbsPer100g,
+          fat: match.fatPer100g,
+          defaultGrams: match.defaultServingGrams,
+          source: "usda",
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[Actions] searchFoodDatabaseAction USDA error:", err);
+  }
+
+  return results.slice(0, 8);
+}
+
 export async function estimateFoodMacrosAction(
   foodName: string,
   grams?: number
 ): Promise<EstimatedMacroResult> {
-  return estimateFoodMacros(foodName, grams);
+  const syncEstimate = estimateFoodMacros(foodName, grams);
+  if (syncEstimate.matched) {
+    return syncEstimate;
+  }
+
+  try {
+    const usdaResult = await getUsdaFoodNutrition(foodName, grams);
+    if (usdaResult && usdaResult.matched) {
+      return usdaResult;
+    }
+  } catch (err) {
+    console.warn("[Actions] estimateFoodMacrosAction USDA error:", err);
+  }
+
+  return syncEstimate;
 }
+

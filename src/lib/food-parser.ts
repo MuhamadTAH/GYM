@@ -11,6 +11,7 @@
  * - "ate 450 calories and 40g protein"
  */
 
+
 export interface ParsedItemResult {
   raw: string;
   name: string;
@@ -612,6 +613,7 @@ export function estimateFoodMacros(foodName: string, grams?: number): EstimatedM
     fat,
   };
 }
+
 
 /**
  * Extracts numeric quantity from text or word numbers

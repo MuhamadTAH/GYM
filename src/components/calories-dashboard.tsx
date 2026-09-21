@@ -29,8 +29,10 @@ import {
   resetDailyTrackingAction,
   scanMealImageAction,
   estimateFoodMacrosAction,
+  searchFoodDatabaseAction,
   type DailyGoalsData,
   type SaveDailyGoalsInput,
+  type FoodSearchResultItem,
 } from "@/app/actions";
 import { FOOD_DATABASE, type EstimatedMacroResult } from "@/lib/food-parser";
 import type { LoggedItem } from "@/db/schema";
@@ -49,6 +51,7 @@ export function CaloriesDashboard() {
   const [grams, setGrams] = useState<string>("");
   const [estimatedMacros, setEstimatedMacros] = useState<EstimatedMacroResult | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState<FoodSearchResultItem[]>([]);
 
   // Mode 2: In-page Camera / Image state
   const [isMealScanModalOpen, setIsMealScanModalOpen] = useState(false);
@@ -103,6 +106,23 @@ export function CaloriesDashboard() {
       setEstimatedMacros(result);
     });
   }, [foodName, grams]);
+
+  // Search food database (curated + USDA) as user types
+  useEffect(() => {
+    const trimmed = foodName.trim();
+    if (!trimmed || trimmed.length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      searchFoodDatabaseAction(trimmed).then((items) => {
+        setSearchSuggestions(items);
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [foodName]);
 
   // Flash status message
   const showFeedback = (text: string, type: "success" | "error" = "success") => {
@@ -640,28 +660,41 @@ export function CaloriesDashboard() {
                   )}
                 </div>
 
-                {/* Suggestions Dropdown */}
-                {showSuggestions && filteredSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl z-20 overflow-hidden">
-                    {filteredSuggestions.map((item) => (
-                      <button
-                        key={item.displayName}
-                        type="button"
-                        onClick={() => {
-                          setFoodName(item.displayName);
-                          setShowSuggestions(false);
-                        }}
-                        className="w-full text-left px-3.5 py-2 hover:bg-zinc-900 flex items-center justify-between text-xs text-zinc-300 border-b border-zinc-900 last:border-0"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span>{item.emoji}</span>
-                          <span className="font-bold">{item.displayName}</span>
-                        </span>
-                        <span className="text-zinc-500 font-mono">
-                          ~{item.caloriesPerUnit} kcal / {item.unitType}
-                        </span>
-                      </button>
-                    ))}
+                {/* Suggestions Dropdown (Curated + USDA Database) */}
+                {showSuggestions && (searchSuggestions.length > 0 || filteredSuggestions.length > 0) && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl z-30 overflow-hidden max-h-64 overflow-y-auto">
+                    {(searchSuggestions.length > 0 ? searchSuggestions : filteredSuggestions).map((item) => {
+                      const isUsdaItem = "source" in item && item.source === "usda";
+                      const subtitle =
+                        "subtitle" in item
+                          ? item.subtitle
+                          : `~${item.caloriesPerUnit} kcal / ${item.unitType}`;
+
+                      return (
+                        <button
+                          key={item.displayName}
+                          type="button"
+                          onClick={() => {
+                            setFoodName(item.displayName);
+                            setShowSuggestions(false);
+                          }}
+                          className="w-full text-left px-3.5 py-2.5 hover:bg-zinc-900 flex items-center justify-between text-xs text-zinc-300 border-b border-zinc-900 last:border-0 transition"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="text-base">{item.emoji}</span>
+                            <span className="font-bold text-zinc-200">{item.displayName}</span>
+                            {isUsdaItem && (
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-400 border border-sky-800/60 font-semibold">
+                                USDA
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-zinc-400 font-mono text-[11px]">
+                            {subtitle}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
