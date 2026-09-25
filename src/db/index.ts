@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	today_walk_minutes real DEFAULT 0 NOT NULL,
 	today_training_completed integer DEFAULT false NOT NULL,
 	today_logged_items text,
+	last_active_date text,
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
@@ -153,6 +154,24 @@ CREATE TABLE IF NOT EXISTS exercises (
 	created_at text NOT NULL,
 	updated_at text NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS daily_nutrition_logs (
+	id text PRIMARY KEY NOT NULL,
+	user_id text NOT NULL,
+	date text NOT NULL,
+	calories real DEFAULT 0 NOT NULL,
+	protein real DEFAULT 0 NOT NULL,
+	water_liters real DEFAULT 0 NOT NULL,
+	walk_minutes real DEFAULT 0 NOT NULL,
+	training_completed integer DEFAULT false NOT NULL,
+	calorie_target real,
+	protein_target real,
+	logged_items text,
+	notes text,
+	created_at text NOT NULL,
+	updated_at text NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
+);
 `;
 
 const columnMigrations = [
@@ -168,6 +187,7 @@ const columnMigrations = [
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_focus_notes text;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_phases text;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN today_logged_items text;",
+  "ALTER TABLE athlete_daily_goals ADD COLUMN last_active_date text;",
 ];
 
 // Run SQLite in WAL mode with a busy timeout and ensure schema tables exist

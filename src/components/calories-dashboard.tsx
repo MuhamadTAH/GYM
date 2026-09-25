@@ -20,6 +20,12 @@ import {
   Droplet,
   ChevronRight,
   Upload,
+  Calendar,
+  History,
+  FastForward,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -30,9 +36,12 @@ import {
   scanMealImageAction,
   estimateFoodMacrosAction,
   searchFoodDatabaseAction,
+  getDailyProgressHistoryAction,
+  simulateNewDayRolloverAction,
   type DailyGoalsData,
   type SaveDailyGoalsInput,
   type FoodSearchResultItem,
+  type DailyNutritionLogRecord,
 } from "@/app/actions";
 import { FOOD_DATABASE, type EstimatedMacroResult } from "@/lib/food-parser";
 import type { LoggedItem } from "@/db/schema";
@@ -72,11 +81,29 @@ export function CaloriesDashboard() {
   const [targetCaloriesInput, setTargetCaloriesInput] = useState("");
   const [targetProteinInput, setTargetProteinInput] = useState("");
 
+  // Day-by-Day Progress History state
+  const [history, setHistory] = useState<DailyNutritionLogRecord[]>([]);
+  const [expandedDayDate, setExpandedDayDate] = useState<string | null>(null);
+  const [isSimulatingDay, setIsSimulatingDay] = useState(false);
+
+  const getClientLocalDate = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
   const refreshData = () => {
     startTransition(async () => {
       try {
-        const data = await getDailyGoalsAction();
+        const localDate = getClientLocalDate();
+        const [data, hist] = await Promise.all([
+          getDailyGoalsAction(localDate),
+          getDailyProgressHistoryAction(14, localDate),
+        ]);
         setGoals(data);
+        setHistory(hist);
         if (data) {
           setTargetCaloriesInput(data.caloriesTarget?.toString() || "1900");
           setTargetProteinInput(data.proteinMinGrams?.toString() || "65");
@@ -153,10 +180,12 @@ export function CaloriesDashboard() {
 
     startTransition(async () => {
       try {
+        const localDate = getClientLocalDate();
         const res = await logNaturalEntryAction({
           text: loggedText,
           calories: macros.calories,
           protein: macros.protein,
+          clientLocalDate: localDate,
         });
 
         if (res.success) {
@@ -164,6 +193,8 @@ export function CaloriesDashboard() {
           setFoodName("");
           setGrams(""); // Keep weight empty/optional for the next meal
           setEstimatedMacros(null);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
           showFeedback(`Logged ${loggedText} (+${macros.calories} kcal, +${macros.protein}g protein)`);
         } else {
           showFeedback(res.message, "error");
@@ -218,16 +249,20 @@ export function CaloriesDashboard() {
 
     startTransition(async () => {
       try {
+        const localDate = getClientLocalDate();
         const res = await logNaturalEntryAction({
           text: scannedMealResult.mealName,
           calories: scannedMealResult.totalCalories,
           protein: scannedMealResult.totalProtein,
+          clientLocalDate: localDate,
         });
 
         if (res.success) {
           setGoals(res.goals);
           setSelectedImageBase64(null);
           setScannedMealResult(null);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
           showFeedback(
             `Logged scanned meal: ${scannedMealResult.mealName} (+${scannedMealResult.totalCalories} kcal, +${scannedMealResult.totalProtein}g protein)`
           );
@@ -247,10 +282,13 @@ export function CaloriesDashboard() {
 
     startTransition(async () => {
       try {
-        const res = await logNaturalEntryAction({ text });
+        const localDate = getClientLocalDate();
+        const res = await logNaturalEntryAction({ text, clientLocalDate: localDate });
         if (res.success) {
           setGoals(res.goals);
           if (!textToLog) setQuickInput("");
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
           showFeedback(`Logged: "${text}" (+${res.loggedItem?.calories || 0} kcal)`);
         } else {
           showFeedback(res.message, "error");
@@ -268,6 +306,8 @@ export function CaloriesDashboard() {
         const res = await deleteLoggedItemAction(itemId);
         if (res.success) {
           setGoals(res.goals);
+          const hist = await getDailyProgressHistoryAction(14, getClientLocalDate());
+          setHistory(hist);
           showFeedback("Item removed and calories updated.");
         }
       } catch (err) {
@@ -282,10 +322,36 @@ export function CaloriesDashboard() {
     startTransition(async () => {
       try {
         const res = await resetDailyTrackingAction();
-        if (res.goals) setGoals(res.goals);
+        if (res.goals) {
+          setGoals(res.goals);
+          const hist = await getDailyProgressHistoryAction(14, getClientLocalDate());
+          setHistory(hist);
+        }
         showFeedback("Today's calories reset to 0.");
       } catch (err) {
         console.error("Failed to reset daily calories:", err);
+      }
+    });
+  };
+
+  // 6. Simulate or Advance to New Day (Archives today to progress & resets to 0 kcal)
+  const handleSimulateNewDay = async () => {
+    if (!window.confirm("Advance to a New Day? Today's intake will be saved to your Progress History, and today's counter will be reset to 0 so you can fill your new day!")) return;
+    setIsSimulatingDay(true);
+    startTransition(async () => {
+      try {
+        const res = await simulateNewDayRolloverAction();
+        if (res.success) {
+          setGoals(res.goals);
+          const hist = await getDailyProgressHistoryAction(14, res.goals.lastActiveDate || getClientLocalDate());
+          setHistory(hist);
+          showFeedback(res.message);
+        }
+      } catch (err) {
+        console.error("Failed to advance to new day:", err);
+        showFeedback("Failed to roll over to new day.", "error");
+      } finally {
+        setIsSimulatingDay(false);
       }
     });
   };
@@ -460,13 +526,30 @@ export function CaloriesDashboard() {
                   DEFICIT TRACKER
                 </span>
               </h1>
-              <p className="text-xs text-zinc-400">
-                Precision tracking for weight loss: log food names, grams, or photo scans
-              </p>
+              <div className="flex items-center gap-2 flex-wrap text-xs text-zinc-400 mt-0.5">
+                <span className="flex items-center gap-1 text-amber-400 font-mono font-bold">
+                  <Calendar className="w-3.5 h-3.5" />
+                  {goals?.lastActiveDate || getClientLocalDate()}
+                </span>
+                <span className="text-zinc-600">•</span>
+                <span className="text-emerald-400 font-mono text-[11px]">
+                  Daily Reset &amp; Progress Active
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleSimulateNewDay}
+              disabled={isPending || isSimulatingDay}
+              className="px-3 py-1.5 rounded-lg bg-zinc-850 hover:bg-amber-400/20 text-zinc-300 hover:text-amber-300 border border-zinc-750 hover:border-amber-400/40 text-xs font-mono flex items-center gap-1.5 transition cursor-pointer"
+              title="Advance to new day (archives today's calories to progress history and resets today's tracking to 0)"
+            >
+              <FastForward className={`w-3.5 h-3.5 text-amber-400 ${isSimulatingDay ? "animate-pulse" : ""}`} />
+              <span>New Day</span>
+            </button>
             <button
               type="button"
               onClick={() => setIsTargetModalOpen(true)}
@@ -1096,6 +1179,226 @@ export function CaloriesDashboard() {
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 4: DAY-BY-DAY PROGRESS & HISTORY (SAVED PROGRESS) */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400">
+              <History className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-zinc-100">DAY-BY-DAY PROGRESS &amp; HISTORY</h3>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
+                  AUTO-SAVED
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Today&apos;s intake resets on every new day. Past days are preserved here in your progress.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSimulateNewDay}
+              disabled={isPending || isSimulatingDay}
+              className="px-3 py-1.5 rounded-xl bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border border-amber-400/30 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer"
+              title="Save today to progress and reset today's counter to 0 kcal"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+              <span>Simulate / Advance Day</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Days List / Timeline */}
+        {history.length === 0 ? (
+          <div className="py-8 text-center text-zinc-500 font-mono text-xs">
+            No history recorded yet. Log your first meal today!
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {history.map((dayRecord) => {
+              const isExpanded = expandedDayDate === dayRecord.date;
+              const isToday = dayRecord.isToday;
+              const percent = dayRecord.calorieTarget
+                ? Math.min(100, Math.round((dayRecord.calories / dayRecord.calorieTarget) * 100))
+                : 0;
+
+              return (
+                <div
+                  key={dayRecord.date}
+                  className={`border rounded-xl transition overflow-hidden ${
+                    isToday
+                      ? "bg-zinc-950/90 border-amber-400/40 shadow-md shadow-amber-400/5"
+                      : "bg-zinc-950/60 border-zinc-800/90 hover:border-zinc-700"
+                  }`}
+                >
+                  {/* Day Summary Bar */}
+                  <div
+                    onClick={() => setExpandedDayDate(isExpanded ? null : dayRecord.date)}
+                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-mono text-xs font-bold shrink-0 ${
+                          isToday
+                            ? "bg-amber-400/20 text-amber-300 border border-amber-400/30"
+                            : "bg-zinc-850 text-zinc-300 border border-zinc-750"
+                        }`}
+                      >
+                        <Calendar className="w-4 h-4 mb-0.5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-zinc-100 font-sans">
+                            {dayRecord.displayDate}
+                          </span>
+                          <span className="text-xs font-mono text-zinc-500">
+                            ({dayRecord.date})
+                          </span>
+                          {isToday ? (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
+                              TODAY (ACTIVE)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-850 text-zinc-400 border border-zinc-750 font-medium">
+                              SAVED PROGRESS
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 mt-1 flex-wrap">
+                          <span className="text-zinc-300 font-bold">
+                            {dayRecord.calories.toLocaleString()} kcal
+                          </span>
+                          <span className="text-zinc-600">/</span>
+                          <span className="text-zinc-400">
+                            {dayRecord.calorieTarget?.toLocaleString() || 1900} kcal target
+                          </span>
+                          <span className="text-zinc-600">•</span>
+                          <span className="text-emerald-400">
+                            {dayRecord.protein}g Protein
+                          </span>
+                          <span className="text-zinc-600">•</span>
+                          <span className="text-zinc-400">
+                            {dayRecord.itemsCount} {dayRecord.itemsCount === 1 ? "meal" : "meals"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 self-end sm:self-center">
+                      <span
+                        className={`text-xs font-mono px-2.5 py-1 rounded-lg border font-bold ${
+                          dayRecord.status === "under_budget"
+                            ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-400"
+                            : dayRecord.status === "on_track"
+                            ? "bg-sky-950/60 border-sky-800/80 text-sky-400"
+                            : "bg-rose-950/60 border-rose-800/80 text-rose-400"
+                        }`}
+                      >
+                        {dayRecord.status === "under_budget"
+                          ? "Deficit Safe"
+                          : dayRecord.status === "on_track"
+                          ? "Target Met"
+                          : "Surplus"}
+                      </span>
+
+                      <button
+                        type="button"
+                        className="p-1 text-zinc-400 hover:text-zinc-200 transition"
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-zinc-800 h-1 overflow-hidden">
+                    <div
+                      className={`h-full transition-all ${
+                        percent > 100
+                          ? "bg-rose-500"
+                          : isToday
+                          ? "bg-amber-400"
+                          : "bg-emerald-500"
+                      }`}
+                      style={{ width: `${Math.min(100, percent)}%` }}
+                    />
+                  </div>
+
+                  {/* Expanded Meals Breakdown for that Day */}
+                  {isExpanded && (
+                    <div className="bg-zinc-950/90 border-t border-zinc-800/80 p-4 space-y-2 animate-fadeIn">
+                      <div className="text-xs font-mono font-bold text-zinc-400 mb-2 flex items-center justify-between">
+                        <span>Meals Eaten on {dayRecord.displayDate} ({dayRecord.date}):</span>
+                        <span>{dayRecord.itemsCount} {dayRecord.itemsCount === 1 ? "entry" : "entries"}</span>
+                      </div>
+
+                      {dayRecord.items.length === 0 ? (
+                        <p className="text-xs font-mono text-zinc-500 italic py-2">
+                          {isToday
+                            ? "No meals logged yet today. Use the log box above to fill today's calories."
+                            : "No food items recorded for this date."}
+                        </p>
+                      ) : (
+                        <div className="divide-y divide-zinc-900 space-y-1">
+                          {dayRecord.items.map((item, idx) => {
+                            const time = item.timestamp
+                              ? new Date(item.timestamp).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : "";
+
+                            return (
+                              <div
+                                key={item.id || idx}
+                                className="py-2 flex items-center justify-between gap-3 text-xs font-mono text-zinc-300"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-sm shrink-0">
+                                    {item.summary?.split(" ")[0] || "🍽️"}
+                                  </span>
+                                  <span className="font-bold truncate text-zinc-200">
+                                    {item.name}
+                                  </span>
+                                  {time && (
+                                    <span className="text-[10px] text-zinc-500">
+                                      at {time}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <span className="text-amber-400 font-bold">
+                                    +{item.calories} kcal
+                                  </span>
+                                  {item.protein > 0 && (
+                                    <span className="text-emerald-400">
+                                      +{item.protein}g protein
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

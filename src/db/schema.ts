@@ -228,6 +228,7 @@ export const athleteDailyGoals = sqliteTable("athlete_daily_goals", {
     .notNull()
     .default(false),
   todayLoggedItems: text("today_logged_items", { mode: "json" }).$type<LoggedItem[]>(),
+  lastActiveDate: text("last_active_date"), // YYYY-MM-DD for day rollover detection
 
   updatedAt: text("updated_at").notNull(),
 });
@@ -287,3 +288,32 @@ export const exercises = sqliteTable("exercises", {
 
 export type ExerciseRow = typeof exercises.$inferSelect;
 export type InsertExerciseRow = typeof exercises.$inferInsert;
+
+/**
+ * CORE RELATIONAL TABLE: daily_nutrition_logs
+ * Day-by-day persistent record of athlete's nutrition, calories, and meals eaten.
+ * Automatically archives previous days' intake when a new day rolls over.
+ */
+export const dailyNutritionLogs = sqliteTable("daily_nutrition_logs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => userProfiles.id, { onDelete: "cascade" }),
+  date: text("date").notNull(), // ISO Date: YYYY-MM-DD
+  calories: real("calories").notNull().default(0),
+  protein: real("protein").notNull().default(0),
+  waterLiters: real("water_liters").notNull().default(0),
+  walkMinutes: real("walk_minutes").notNull().default(0),
+  trainingCompleted: integer("training_completed", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  calorieTarget: real("calorie_target"),
+  proteinTarget: real("protein_target"),
+  loggedItems: text("logged_items", { mode: "json" }).$type<LoggedItem[]>(),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type DailyNutritionLogRow = typeof dailyNutritionLogs.$inferSelect;
+export type InsertDailyNutritionLogRow = typeof dailyNutritionLogs.$inferInsert;

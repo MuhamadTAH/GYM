@@ -7,7 +7,9 @@ import {
   exerciseSets,
   coachMessages,
   athleteDailyGoals,
+  dailyNutritionLogs,
   type AthleteDailyGoalsRow,
+  type DailyNutritionLogRow,
   type WeeklySplitDay,
   type MonthlyPhase,
   type LoggedItem,
@@ -1240,7 +1242,26 @@ export interface DailyGoalsData {
   todayTrainingCompleted: boolean;
   todayLoggedItems: LoggedItem[];
   weeklyWorkoutsCompleted: number;
+  lastActiveDate?: string | null;
   updatedAt?: string;
+}
+
+export interface DailyNutritionLogRecord {
+  id: string;
+  date: string; // YYYY-MM-DD
+  displayDate: string; // "Today", "Yesterday", "Wed, Sep 23"
+  calories: number;
+  calorieTarget: number | null;
+  caloriesRemaining: number;
+  protein: number;
+  proteinTarget: number | null;
+  waterLiters?: number;
+  walkMinutes?: number;
+  trainingCompleted?: boolean;
+  itemsCount: number;
+  items: LoggedItem[];
+  isToday: boolean;
+  status: "under_budget" | "on_track" | "over_budget";
 }
 
 export interface SaveDailyGoalsInput {
@@ -1272,15 +1293,183 @@ export interface SaveDailyGoalsInput {
   monthlyTotalWorkoutsTarget?: number | null;
   monthlyFocusNotes?: string | null;
   monthlyPhases?: MonthlyPhase[] | null;
+  lastActiveDate?: string | null;
+}
+
+function getLocalDateString(clientDate?: string): string {
+  if (clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate)) {
+    return clientDate;
+  }
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(dateStr: string, todayStr: string): string {
+  if (dateStr === todayStr) return "Today";
+
+  const [ty, tm, td] = todayStr.split("-").map(Number);
+  const todayObj = new Date(ty, tm - 1, td);
+  const yesterdayObj = new Date(todayObj);
+  yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+  const yStr = `${yesterdayObj.getFullYear()}-${String(yesterdayObj.getMonth() + 1).padStart(2, "0")}-${String(yesterdayObj.getDate()).padStart(2, "0")}`;
+
+  if (dateStr === yStr) return "Yesterday";
+
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const targetObj = new Date(y, m - 1, d);
+  return targetObj.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+async function syncDailyNutritionLog(
+  userId: string,
+  date: string,
+  totals: {
+    calories: number;
+    protein: number;
+    waterLiters: number;
+    walkMinutes: number;
+    trainingCompleted: boolean;
+  },
+  items: LoggedItem[],
+  targets: {
+    calorieTarget?: number | null;
+    proteinTarget?: number | null;
+  }
+) {
+  const now = new Date().toISOString();
+  const existingLog = await db
+    .select()
+    .from(dailyNutritionLogs)
+    .where(and(eq(dailyNutritionLogs.userId, userId), eq(dailyNutritionLogs.date, date)))
+    .limit(1);
+
+  if (existingLog.length === 0) {
+    await db.insert(dailyNutritionLogs).values({
+      id: crypto.randomUUID(),
+      userId,
+      date,
+      calories: totals.calories,
+      protein: totals.protein,
+      waterLiters: totals.waterLiters,
+      walkMinutes: totals.walkMinutes,
+      trainingCompleted: totals.trainingCompleted,
+      calorieTarget: targets.calorieTarget,
+      proteinTarget: targets.proteinTarget,
+      loggedItems: items,
+      createdAt: now,
+      updatedAt: now,
+    });
+  } else {
+    await db
+      .update(dailyNutritionLogs)
+      .set({
+        calories: totals.calories,
+        protein: totals.protein,
+        waterLiters: totals.waterLiters,
+        walkMinutes: totals.walkMinutes,
+        trainingCompleted: totals.trainingCompleted,
+        calorieTarget: targets.calorieTarget,
+        proteinTarget: targets.proteinTarget,
+        loggedItems: items,
+        updatedAt: now,
+      })
+      .where(eq(dailyNutritionLogs.id, existingLog[0].id));
+  }
+}
+
+async function ensureDayRollover(
+  userId: string,
+  currentRow: AthleteDailyGoalsRow,
+  clientLocalDate?: string
+): Promise<AthleteDailyGoalsRow> {
+  const todayDate = getLocalDateString(clientLocalDate);
+  const now = new Date().toISOString();
+
+  // If no lastActiveDate was ever set, initialize it to todayDate
+  if (!currentRow.lastActiveDate) {
+    await db
+      .update(athleteDailyGoals)
+      .set({ lastActiveDate: todayDate, updatedAt: now })
+      .where(eq(athleteDailyGoals.id, currentRow.id));
+    return { ...currentRow, lastActiveDate: todayDate };
+  }
+
+  // If already on todayDate, nothing to roll over
+  if (currentRow.lastActiveDate === todayDate) {
+    return currentRow;
+  }
+
+  // A new day has started!
+  const prevDate = currentRow.lastActiveDate;
+  const prevCalories = currentRow.todayCalories ?? 0;
+  let prevItems: LoggedItem[] = [];
+  if (currentRow.todayLoggedItems) {
+    try {
+      prevItems = typeof currentRow.todayLoggedItems === "string"
+        ? JSON.parse(currentRow.todayLoggedItems)
+        : (currentRow.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  // 1. Save previous day into dailyNutritionLogs if it has data or not already saved
+  if (prevCalories > 0 || prevItems.length > 0) {
+    await syncDailyNutritionLog(
+      userId,
+      prevDate,
+      {
+        calories: prevCalories,
+        protein: currentRow.todayProtein ?? 0,
+        waterLiters: currentRow.todayWaterLiters ?? 0,
+        walkMinutes: currentRow.todayWalkMinutes ?? 0,
+        trainingCompleted: Boolean(currentRow.todayTrainingCompleted),
+      },
+      prevItems,
+      {
+        calorieTarget: currentRow.caloriesTarget,
+        proteinTarget: currentRow.proteinMinGrams,
+      }
+    );
+  }
+
+  // 2. Reset today's live intake back to 0 for the new day
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+      todayLoggedItems: [],
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, currentRow.id));
+
+  return {
+    ...currentRow,
+    todayCalories: 0,
+    todayProtein: 0,
+    todayWaterLiters: 0,
+    todayWalkMinutes: 0,
+    todayTrainingCompleted: 0 as any,
+    todayLoggedItems: [] as any,
+    lastActiveDate: todayDate,
+    updatedAt: now,
+  };
 }
 
 /**
  * Retrieve the athlete's current custom daily goals, weekly plan, and monthly mesocycle.
  * Starts completely un-prefilled (all targets null) if not previously configured.
  */
-export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
+export async function getDailyGoalsAction(clientLocalDate?: string): Promise<DailyGoalsData> {
   const sessionData = await getOrCreateActiveSession();
   const userId = sessionData.userId;
+  const todayDate = getLocalDateString(clientLocalDate);
 
   // Count workouts completed in the last 7 days for adherence calculation
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -1335,10 +1524,12 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
       todayTrainingCompleted: false,
       todayLoggedItems: [],
       weeklyWorkoutsCompleted: completedSessions.length,
+      lastActiveDate: todayDate,
     };
   }
 
-  const row = existing[0];
+  // Ensure day rollover is evaluated
+  const row = await ensureDayRollover(userId, existing[0], clientLocalDate);
 
   const parseJsonField = <T>(val: any): T | null => {
     if (!val) return null;
@@ -1386,6 +1577,7 @@ export async function getDailyGoalsAction(): Promise<DailyGoalsData> {
     todayTrainingCompleted: Boolean(row.todayTrainingCompleted),
     todayLoggedItems: parseJsonField<LoggedItem[]>(row.todayLoggedItems) ?? [],
     weeklyWorkoutsCompleted: completedSessions.length,
+    lastActiveDate: row.lastActiveDate ?? todayDate,
     updatedAt: row.updatedAt,
   };
 }
@@ -1580,6 +1772,7 @@ export async function logNaturalEntryAction(input: {
   waterLiters?: number;
   walkMinutes?: number;
   trainingCompleted?: boolean;
+  clientLocalDate?: string;
 }): Promise<{
   success: boolean;
   message: string;
@@ -1589,10 +1782,11 @@ export async function logNaturalEntryAction(input: {
   const sessionData = await getOrCreateActiveSession();
   const userId = sessionData.userId;
   const now = new Date().toISOString();
+  const todayDate = getLocalDateString(input.clientLocalDate);
 
   const rawText = input.text.trim();
   if (!rawText) {
-    const goals = await getDailyGoalsAction();
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
     return { success: false, message: "Input cannot be empty.", goals };
   }
 
@@ -1607,7 +1801,7 @@ export async function logNaturalEntryAction(input: {
   const trainingCompleted = input.trainingCompleted !== undefined ? Boolean(input.trainingCompleted) : parsed.trainingCompleted;
 
   if (calories === 0 && protein === 0 && waterLiters === 0 && walkMinutes === 0 && !trainingCompleted && !parsed.success) {
-    const goals = await getDailyGoalsAction();
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
     return { success: false, message: parsed.feedbackSummary, goals };
   }
 
@@ -1644,6 +1838,17 @@ export async function logNaturalEntryAction(input: {
     .where(eq(athleteDailyGoals.userId, userId))
     .limit(1);
 
+  let updatedTotals = {
+    calories,
+    protein,
+    waterLiters,
+    walkMinutes,
+    trainingCompleted,
+  };
+  let updatedItems: LoggedItem[] = [newItem];
+  let currentTargetCalories: number | null = null;
+  let currentTargetProtein: number | null = null;
+
   if (existing.length === 0) {
     const newId = crypto.randomUUID();
     await db.insert(athleteDailyGoals).values({
@@ -1655,36 +1860,61 @@ export async function logNaturalEntryAction(input: {
       todayWalkMinutes: walkMinutes,
       todayTrainingCompleted: trainingCompleted,
       todayLoggedItems: [newItem],
+      lastActiveDate: todayDate,
       updatedAt: now,
     });
   } else {
-    const current = existing[0];
+    // Check day rollover first!
+    const activeRow = await ensureDayRollover(userId, existing[0], input.clientLocalDate);
+    currentTargetCalories = activeRow.caloriesTarget;
+    currentTargetProtein = activeRow.proteinMinGrams;
+
     let itemsList: LoggedItem[] = [];
-    if (current.todayLoggedItems) {
+    if (activeRow.todayLoggedItems) {
       try {
-        itemsList = typeof current.todayLoggedItems === "string"
-          ? JSON.parse(current.todayLoggedItems)
-          : (current.todayLoggedItems as LoggedItem[]);
+        itemsList = typeof activeRow.todayLoggedItems === "string"
+          ? JSON.parse(activeRow.todayLoggedItems)
+          : (activeRow.todayLoggedItems as LoggedItem[]);
       } catch {}
     }
 
-    const updatedItems = [newItem, ...itemsList];
+    updatedItems = [newItem, ...itemsList];
+    updatedTotals = {
+      calories: Math.max(0, (activeRow.todayCalories ?? 0) + calories),
+      protein: Math.max(0, Math.round(((activeRow.todayProtein ?? 0) + protein) * 10) / 10),
+      waterLiters: Math.max(0, Math.round(((activeRow.todayWaterLiters ?? 0) + waterLiters) * 100) / 100),
+      walkMinutes: Math.max(0, (activeRow.todayWalkMinutes ?? 0) + walkMinutes),
+      trainingCompleted: trainingCompleted ? true : Boolean(activeRow.todayTrainingCompleted),
+    };
 
     await db
       .update(athleteDailyGoals)
       .set({
-        todayCalories: Math.max(0, (current.todayCalories ?? 0) + calories),
-        todayProtein: Math.max(0, Math.round(((current.todayProtein ?? 0) + protein) * 10) / 10),
-        todayWaterLiters: Math.max(0, Math.round(((current.todayWaterLiters ?? 0) + waterLiters) * 100) / 100),
-        todayWalkMinutes: Math.max(0, (current.todayWalkMinutes ?? 0) + walkMinutes),
-        todayTrainingCompleted: trainingCompleted ? true : Boolean(current.todayTrainingCompleted),
+        todayCalories: updatedTotals.calories,
+        todayProtein: updatedTotals.protein,
+        todayWaterLiters: updatedTotals.waterLiters,
+        todayWalkMinutes: updatedTotals.walkMinutes,
+        todayTrainingCompleted: updatedTotals.trainingCompleted,
         todayLoggedItems: updatedItems,
+        lastActiveDate: todayDate,
         updatedAt: now,
       })
-      .where(eq(athleteDailyGoals.id, current.id));
+      .where(eq(athleteDailyGoals.id, activeRow.id));
   }
 
-  const updatedGoals = await getDailyGoalsAction();
+  // Also sync persistent day-by-day log for todayDate
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    updatedTotals,
+    updatedItems,
+    {
+      calorieTarget: currentTargetCalories,
+      proteinTarget: currentTargetProtein,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(input.clientLocalDate);
   return {
     success: true,
     message: `Logged: ${newItem.summary}`,
@@ -1713,6 +1943,7 @@ export async function deleteLoggedItemAction(itemId: string): Promise<{ success:
   }
 
   const current = existing[0];
+  const todayDate = current.lastActiveDate || getLocalDateString();
   let itemsList: LoggedItem[] = [];
   if (current.todayLoggedItems) {
     try {
@@ -1731,18 +1962,41 @@ export async function deleteLoggedItemAction(itemId: string): Promise<{ success:
   const remainingItems = itemsList.filter((i) => i.id !== itemId);
   const stillHasTraining = remainingItems.some((i) => i.trainingCompleted);
 
+  const updatedCalories = Math.max(0, (current.todayCalories ?? 0) - targetItem.calories);
+  const updatedProtein = Math.max(0, Math.round(((current.todayProtein ?? 0) - targetItem.protein) * 10) / 10);
+  const updatedWater = Math.max(0, Math.round(((current.todayWaterLiters ?? 0) - targetItem.waterLiters) * 100) / 100);
+  const updatedWalk = Math.max(0, (current.todayWalkMinutes ?? 0) - targetItem.walkMinutes);
+
   await db
     .update(athleteDailyGoals)
     .set({
-      todayCalories: Math.max(0, (current.todayCalories ?? 0) - targetItem.calories),
-      todayProtein: Math.max(0, Math.round(((current.todayProtein ?? 0) - targetItem.protein) * 10) / 10),
-      todayWaterLiters: Math.max(0, Math.round(((current.todayWaterLiters ?? 0) - targetItem.waterLiters) * 100) / 100),
-      todayWalkMinutes: Math.max(0, (current.todayWalkMinutes ?? 0) - targetItem.walkMinutes),
+      todayCalories: updatedCalories,
+      todayProtein: updatedProtein,
+      todayWaterLiters: updatedWater,
+      todayWalkMinutes: updatedWalk,
       todayTrainingCompleted: stillHasTraining,
       todayLoggedItems: remainingItems,
       updatedAt: now,
     })
     .where(eq(athleteDailyGoals.id, current.id));
+
+  // Sync with persistent daily log
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: updatedCalories,
+      protein: updatedProtein,
+      waterLiters: updatedWater,
+      walkMinutes: updatedWalk,
+      trainingCompleted: stillHasTraining,
+    },
+    remainingItems,
+    {
+      calorieTarget: current.caloriesTarget,
+      proteinTarget: current.proteinMinGrams,
+    }
+  );
 
   const updatedGoals = await getDailyGoalsAction();
   return { success: true, goals: updatedGoals };
@@ -1755,6 +2009,8 @@ export async function resetDailyTrackingAction(): Promise<{ success: boolean; go
   const sessionData = await getOrCreateActiveSession();
   const userId = sessionData.userId;
   const now = new Date().toISOString();
+  const goals = await getDailyGoalsAction();
+  const todayDate = goals.lastActiveDate || getLocalDateString();
 
   await db
     .update(athleteDailyGoals)
@@ -1768,6 +2024,24 @@ export async function resetDailyTrackingAction(): Promise<{ success: boolean; go
       updatedAt: now,
     })
     .where(eq(athleteDailyGoals.userId, userId));
+
+  // Sync zeroed metrics to daily log for todayDate
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: 0,
+      protein: 0,
+      waterLiters: 0,
+      walkMinutes: 0,
+      trainingCompleted: false,
+    },
+    [],
+    {
+      calorieTarget: goals.caloriesTarget,
+      proteinTarget: goals.proteinMinGrams,
+    }
+  );
 
   const updatedGoals = await getDailyGoalsAction();
   return { success: true, goals: updatedGoals };
@@ -1784,8 +2058,252 @@ export async function clearAllGoalsAction(): Promise<{ success: boolean; goals: 
     .delete(athleteDailyGoals)
     .where(eq(athleteDailyGoals.userId, userId));
 
+  await db
+    .delete(dailyNutritionLogs)
+    .where(eq(dailyNutritionLogs.userId, userId));
+
   const updatedGoals = await getDailyGoalsAction();
   return { success: true, goals: updatedGoals };
+}
+
+/**
+ * Advance or simulate a new day rollover.
+ * Saves current day's intake into dailyNutritionLogs, sets lastActiveDate to nextDate (or targetDate),
+ * and resets today's tracking to 0 so the athlete has a clean slate to fill.
+ */
+export async function simulateNewDayRolloverAction(
+  targetDate?: string
+): Promise<{ success: boolean; goals: DailyGoalsData; message: string }> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+
+  let existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction(targetDate);
+    return { success: true, goals, message: "Initialized day tracking." };
+  }
+
+  const current = existing[0];
+  const currentDate = current.lastActiveDate || getLocalDateString();
+
+  // Calculate next date (tomorrow or user specified)
+  let nextDate = targetDate;
+  if (!nextDate) {
+    const [y, m, d] = currentDate.split("-").map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() + 1);
+    const ny = dateObj.getFullYear();
+    const nm = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const nd = String(dateObj.getDate()).padStart(2, "0");
+    nextDate = `${ny}-${nm}-${nd}`;
+  }
+
+  // 1. Archive current day into dailyNutritionLogs
+  let currentItems: LoggedItem[] = [];
+  if (current.todayLoggedItems) {
+    try {
+      currentItems = typeof current.todayLoggedItems === "string"
+        ? JSON.parse(current.todayLoggedItems)
+        : (current.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  await syncDailyNutritionLog(
+    userId,
+    currentDate,
+    {
+      calories: current.todayCalories ?? 0,
+      protein: current.todayProtein ?? 0,
+      waterLiters: current.todayWaterLiters ?? 0,
+      walkMinutes: current.todayWalkMinutes ?? 0,
+      trainingCompleted: Boolean(current.todayTrainingCompleted),
+    },
+    currentItems,
+    {
+      calorieTarget: current.caloriesTarget,
+      proteinTarget: current.proteinMinGrams,
+    }
+  );
+
+  // 2. Reset today's intake for the new day
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: 0,
+      todayProtein: 0,
+      todayWaterLiters: 0,
+      todayWalkMinutes: 0,
+      todayTrainingCompleted: false,
+      todayLoggedItems: [],
+      lastActiveDate: nextDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, current.id));
+
+  const updatedGoals = await getDailyGoalsAction(nextDate);
+  return {
+    success: true,
+    goals: updatedGoals,
+    message: `Advanced to new day (${nextDate}). Previous day saved to progress and today reset to 0 kcal!`,
+  };
+}
+
+/**
+ * Retrieve the athlete's day-by-day progress history (past N days).
+ * Formats each day with date, total calories eaten, target, deficit remaining, and meals list.
+ */
+export async function getDailyProgressHistoryAction(
+  days: number = 14,
+  clientLocalDate?: string
+): Promise<DailyNutritionLogRecord[]> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const todayDate = getLocalDateString(clientLocalDate);
+
+  // Ensure current day rollover has been processed
+  const currentGoals = await getDailyGoalsAction(clientLocalDate);
+
+  // Fetch saved past days from dailyNutritionLogs
+  const logs = await db
+    .select()
+    .from(dailyNutritionLogs)
+    .where(eq(dailyNutritionLogs.userId, userId))
+    .orderBy(desc(dailyNutritionLogs.date))
+    .limit(days);
+
+  const recordsMap = new Map<string, DailyNutritionLogRecord>();
+
+  for (const row of logs) {
+    let items: LoggedItem[] = [];
+    if (row.loggedItems) {
+      try {
+        items = typeof row.loggedItems === "string"
+          ? JSON.parse(row.loggedItems)
+          : (row.loggedItems as LoggedItem[]);
+      } catch {}
+    }
+
+    const target = row.calorieTarget ?? currentGoals.caloriesTarget ?? 1900;
+    const remaining = target - row.calories;
+    const isToday = row.date === todayDate;
+
+    recordsMap.set(row.date, {
+      id: row.id,
+      date: row.date,
+      displayDate: formatDisplayDate(row.date, todayDate),
+      calories: Math.round(row.calories),
+      calorieTarget: target,
+      caloriesRemaining: Math.round(remaining),
+      protein: Math.round(row.protein * 10) / 10,
+      proteinTarget: row.proteinTarget ?? currentGoals.proteinMinGrams ?? 65,
+      waterLiters: row.waterLiters,
+      walkMinutes: row.walkMinutes,
+      trainingCompleted: Boolean(row.trainingCompleted),
+      itemsCount: items.length,
+      items,
+      isToday,
+      status: remaining > 200 ? "under_budget" : remaining >= 0 ? "on_track" : "over_budget",
+    });
+  }
+
+  // Always ensure today reflects currentGoals live active progress
+  const todayTarget = currentGoals.caloriesTarget ?? 1900;
+  const todayRemaining = todayTarget - currentGoals.todayCalories;
+  recordsMap.set(todayDate, {
+    id: `live-${todayDate}`,
+    date: todayDate,
+    displayDate: "Today",
+    calories: Math.round(currentGoals.todayCalories),
+    calorieTarget: todayTarget,
+    caloriesRemaining: Math.round(todayRemaining),
+    protein: Math.round(currentGoals.todayProtein * 10) / 10,
+    proteinTarget: currentGoals.proteinMinGrams ?? 65,
+    waterLiters: currentGoals.todayWaterLiters,
+    walkMinutes: currentGoals.todayWalkMinutes,
+    trainingCompleted: currentGoals.todayTrainingCompleted,
+    itemsCount: currentGoals.todayLoggedItems?.length ?? 0,
+    items: currentGoals.todayLoggedItems ?? [],
+    isToday: true,
+    status: todayRemaining > 200 ? "under_budget" : todayRemaining >= 0 ? "on_track" : "over_budget",
+  });
+
+  return Array.from(recordsMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * Retrieve the full breakdown of meals and metrics for a specific past date.
+ */
+export async function getDailyLogForDateAction(
+  date: string,
+  clientLocalDate?: string
+): Promise<DailyNutritionLogRecord | null> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const currentGoals = await getDailyGoalsAction(clientLocalDate);
+  const todayDate = currentGoals.lastActiveDate || getLocalDateString(clientLocalDate);
+
+  if (date === todayDate) {
+    const todayTarget = currentGoals.caloriesTarget ?? 1900;
+    const todayRemaining = todayTarget - currentGoals.todayCalories;
+    return {
+      id: `live-${todayDate}`,
+      date: todayDate,
+      displayDate: "Today",
+      calories: Math.round(currentGoals.todayCalories),
+      calorieTarget: todayTarget,
+      caloriesRemaining: Math.round(todayRemaining),
+      protein: Math.round(currentGoals.todayProtein * 10) / 10,
+      proteinTarget: currentGoals.proteinMinGrams ?? 65,
+      waterLiters: currentGoals.todayWaterLiters,
+      walkMinutes: currentGoals.todayWalkMinutes,
+      trainingCompleted: currentGoals.todayTrainingCompleted,
+      itemsCount: currentGoals.todayLoggedItems?.length ?? 0,
+      items: currentGoals.todayLoggedItems ?? [],
+      isToday: true,
+      status: todayRemaining > 200 ? "under_budget" : todayRemaining >= 0 ? "on_track" : "over_budget",
+    };
+  }
+
+  const logs = await db
+    .select()
+    .from(dailyNutritionLogs)
+    .where(and(eq(dailyNutritionLogs.userId, userId), eq(dailyNutritionLogs.date, date)))
+    .limit(1);
+
+  if (logs.length === 0) return null;
+  const row = logs[0];
+  let items: LoggedItem[] = [];
+  if (row.loggedItems) {
+    try {
+      items = typeof row.loggedItems === "string" ? JSON.parse(row.loggedItems) : (row.loggedItems as LoggedItem[]);
+    } catch {}
+  }
+  const target = row.calorieTarget ?? currentGoals.caloriesTarget ?? 1900;
+  const remaining = target - row.calories;
+
+  return {
+    id: row.id,
+    date: row.date,
+    displayDate: formatDisplayDate(row.date, todayDate),
+    calories: Math.round(row.calories),
+    calorieTarget: target,
+    caloriesRemaining: Math.round(remaining),
+    protein: Math.round(row.protein * 10) / 10,
+    proteinTarget: row.proteinTarget ?? currentGoals.proteinMinGrams ?? 65,
+    waterLiters: row.waterLiters,
+    walkMinutes: row.walkMinutes,
+    trainingCompleted: Boolean(row.trainingCompleted),
+    itemsCount: items.length,
+    items,
+    isToday: false,
+    status: remaining > 200 ? "under_budget" : remaining >= 0 ? "on_track" : "over_budget",
+  };
 }
 
 /**

@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS athlete_daily_goals (
 	today_walk_minutes real DEFAULT 0 NOT NULL,
 	today_training_completed integer DEFAULT false NOT NULL,
 	today_logged_items text,
+	last_active_date text,
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
@@ -137,6 +138,24 @@ CREATE TABLE IF NOT EXISTS exercises (
 	form_warnings text,
 	created_at text NOT NULL,
 	updated_at text NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS daily_nutrition_logs (
+	id text PRIMARY KEY NOT NULL,
+	user_id text NOT NULL,
+	date text NOT NULL,
+	calories real DEFAULT 0 NOT NULL,
+	protein real DEFAULT 0 NOT NULL,
+	water_liters real DEFAULT 0 NOT NULL,
+	walk_minutes real DEFAULT 0 NOT NULL,
+	training_completed integer DEFAULT false NOT NULL,
+	calorie_target real,
+	protein_target real,
+	logged_items text,
+	notes text,
+	created_at text NOT NULL,
+	updated_at text NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
 `;
 
