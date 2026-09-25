@@ -31,6 +31,9 @@ import {
   getDailyBriefingAction,
   dispatchDailyBriefingAction,
   scanMealImageAction,
+  reviewFoodWithAIAction,
+  updateLoggedFoodCaloriesAction,
+  writeUnestimatedFoodAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -667,6 +670,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["image"],
         },
       },
+      {
+        name: "review_food_entry",
+        description:
+          "Review a logged food entry, calculate accurate calories, protein, carbs, and fat using AI, and update both the food entry and the athlete's daily calorie totals.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            item_id: {
+              type: "string",
+              description: "The unique ID of the logged food item to review and calculate calories for.",
+            },
+          },
+          required: ["item_id"],
+        },
+      },
+      {
+        name: "update_logged_food_calories",
+        description:
+          "Update the calories and protein of a specific logged food item and immediately recalculate the athlete's total daily calories.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            item_id: {
+              type: "string",
+              description: "The unique ID of the logged food item.",
+            },
+            calories: {
+              type: "number",
+              description: "The revised calorie count (kcal) for this food item.",
+            },
+            protein: {
+              type: "number",
+              description: "Optional revised protein in grams.",
+            },
+            notes: {
+              type: "string",
+              description: "Optional explanation or adjustment notes.",
+            },
+          },
+          required: ["item_id", "calories"],
+        },
+      },
     ],
   };
 });
@@ -1132,6 +1177,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const mimeType = String(args?.mime_type || "image/jpeg").trim();
         const result = await scanMealImageAction(image, mimeType);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "review_food_entry": {
+        const itemId = String(args?.item_id || "").trim();
+        if (!itemId) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'item_id'.");
+        }
+        const result = await reviewFoodWithAIAction({ itemId });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "update_logged_food_calories": {
+        const itemId = String(args?.item_id || "").trim();
+        if (!itemId) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'item_id'.");
+        }
+        if (args?.calories === undefined) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'calories'.");
+        }
+        const calories = Number(args.calories);
+        const protein = args?.protein !== undefined ? Number(args.protein) : undefined;
+        const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+        const result = await updateLoggedFoodCaloriesAction({ itemId, calories, protein, notes });
         return {
           content: [
             {

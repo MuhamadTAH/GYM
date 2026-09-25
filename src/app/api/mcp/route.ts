@@ -151,6 +151,8 @@ export async function GET(request: Request) {
             "get_daily_morning_briefing",
             "dispatch_morning_briefing",
             "scan_meal_image",
+            "review_food_entry",
+            "update_logged_food_calories",
           ],
         },
       },

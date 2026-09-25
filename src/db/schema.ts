@@ -245,6 +245,11 @@ export interface LoggedItem {
   walkMinutes: number;
   trainingCompleted: boolean;
   summary: string;
+  aiStatus?: "pending" | "reviewed" | "manual";
+  aiNotes?: string;
+  carbs?: number;
+  fat?: number;
+  portionGrams?: number;
 }
 
 export interface WeeklySplitDay {

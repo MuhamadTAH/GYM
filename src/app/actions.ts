@@ -57,6 +57,10 @@ import {
   getFallbackHeuristicEstimation,
   type ScannedMealResponse,
 } from "@/lib/meal-scanner";
+import {
+  reviewFoodItemWithAI,
+  type AIFoodReviewResult,
+} from "@/lib/ai-food-reviewer";
 
 export interface LoggedSetResponse {
   success: boolean;
@@ -2554,5 +2558,438 @@ export async function estimateFoodMacrosAction(
   }
 
   return syncEstimate;
+}
+
+/**
+ * Write a specific food name into today's log WITHOUT counting calories yet.
+ * The item is stored with calories: 0, protein: 0, aiStatus: 'pending'.
+ * The user or AI can subsequently review it to calculate exact calories.
+ */
+export async function writeUnestimatedFoodAction(input: {
+  foodName: string;
+  clientLocalDate?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  loggedItem?: LoggedItem;
+  goals: DailyGoalsData;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+  const todayDate = getLocalDateString(input.clientLocalDate);
+
+  const cleanName = input.foodName.trim();
+  if (!cleanName) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "Please enter a food name.", goals };
+  }
+
+  // Ensure day rollover check
+  await getDailyGoalsAction(input.clientLocalDate);
+
+  const newItem: LoggedItem = {
+    id: crypto.randomUUID(),
+    timestamp: now,
+    rawText: cleanName,
+    name: cleanName,
+    category: "food",
+    calories: 0,
+    protein: 0,
+    waterLiters: 0,
+    walkMinutes: 0,
+    trainingCompleted: false,
+    aiStatus: "pending",
+    summary: `⏳ ${cleanName} (Pending AI Review - 0 kcal)`,
+  };
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "No active goals found.", goals };
+  }
+
+  const activeRow = existing[0];
+  let itemsList: LoggedItem[] = [];
+  if (activeRow.todayLoggedItems) {
+    try {
+      itemsList =
+        typeof activeRow.todayLoggedItems === "string"
+          ? JSON.parse(activeRow.todayLoggedItems)
+          : (activeRow.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  const updatedItems = [newItem, ...itemsList];
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayLoggedItems: updatedItems,
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, activeRow.id));
+
+  // Sync to daily_nutrition_logs
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: activeRow.todayCalories ?? 0,
+      protein: activeRow.todayProtein ?? 0,
+      waterLiters: activeRow.todayWaterLiters ?? 0,
+      walkMinutes: activeRow.todayWalkMinutes ?? 0,
+      trainingCompleted: Boolean(activeRow.todayTrainingCompleted),
+    },
+    updatedItems,
+    {
+      calorieTarget: activeRow.caloriesTarget,
+      proteinTarget: activeRow.proteinMinGrams,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(input.clientLocalDate);
+  return {
+    success: true,
+    message: `Added "${cleanName}" to list. Click "Review with AI" to calculate calories.`,
+    loggedItem: newItem,
+    goals: updatedGoals,
+  };
+}
+
+/**
+ * Review a logged food item using AI to calculate exact calories and protein,
+ * updating the food item in the list and recalculating the user's total daily calories.
+ */
+export async function reviewFoodWithAIAction(input: {
+  itemId: string;
+  clientLocalDate?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  loggedItem?: LoggedItem;
+  aiResult?: AIFoodReviewResult;
+  goals: DailyGoalsData;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+  const todayDate = getLocalDateString(input.clientLocalDate);
+
+  // Ensure day rollover check
+  await getDailyGoalsAction(input.clientLocalDate);
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "No goals record found.", goals };
+  }
+
+  const activeRow = existing[0];
+  let itemsList: LoggedItem[] = [];
+  if (activeRow.todayLoggedItems) {
+    try {
+      itemsList =
+        typeof activeRow.todayLoggedItems === "string"
+          ? JSON.parse(activeRow.todayLoggedItems)
+          : (activeRow.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  const itemIndex = itemsList.findIndex((i) => i.id === input.itemId);
+  if (itemIndex === -1) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "Logged item not found.", goals };
+  }
+
+  const targetItem = itemsList[itemIndex];
+  const aiResult = await reviewFoodItemWithAI(targetItem.rawText || targetItem.name);
+
+  const updatedItem: LoggedItem = {
+    ...targetItem,
+    calories: aiResult.calories,
+    protein: aiResult.protein,
+    carbs: aiResult.carbs,
+    fat: aiResult.fat,
+    portionGrams: aiResult.portionGrams,
+    aiStatus: "reviewed",
+    aiNotes: aiResult.explanation,
+    summary: `🤖 ${targetItem.name} (+${aiResult.calories} kcal, +${aiResult.protein}g protein)`,
+  };
+
+  const updatedItems = [...itemsList];
+  updatedItems[itemIndex] = updatedItem;
+
+  // Recalculate user's total daily calories & protein
+  const newTodayCalories = updatedItems.reduce((acc, curr) => acc + (curr.calories || 0), 0);
+  const newTodayProtein =
+    Math.round(updatedItems.reduce((acc, curr) => acc + (curr.protein || 0), 0) * 10) / 10;
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: newTodayCalories,
+      todayProtein: newTodayProtein,
+      todayLoggedItems: updatedItems,
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, activeRow.id));
+
+  // Sync to persistent daily_nutrition_logs
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: newTodayCalories,
+      protein: newTodayProtein,
+      waterLiters: activeRow.todayWaterLiters ?? 0,
+      walkMinutes: activeRow.todayWalkMinutes ?? 0,
+      trainingCompleted: Boolean(activeRow.todayTrainingCompleted),
+    },
+    updatedItems,
+    {
+      calorieTarget: activeRow.caloriesTarget,
+      proteinTarget: activeRow.proteinMinGrams,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(input.clientLocalDate);
+  return {
+    success: true,
+    message: `AI calculated ${aiResult.calories} kcal & ${aiResult.protein}g protein for "${targetItem.name}".`,
+    loggedItem: updatedItem,
+    aiResult,
+    goals: updatedGoals,
+  };
+}
+
+/**
+ * Reviews all pending unestimated foods for today in one batch,
+ * recalculating the athlete's daily calorie totals.
+ */
+export async function reviewAllPendingFoodsWithAIAction(input?: {
+  clientLocalDate?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  reviewedCount: number;
+  goals: DailyGoalsData;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+  const todayDate = getLocalDateString(input?.clientLocalDate);
+
+  await getDailyGoalsAction(input?.clientLocalDate);
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction(input?.clientLocalDate);
+    return { success: false, message: "No goals record found.", reviewedCount: 0, goals };
+  }
+
+  const activeRow = existing[0];
+  let itemsList: LoggedItem[] = [];
+  if (activeRow.todayLoggedItems) {
+    try {
+      itemsList =
+        typeof activeRow.todayLoggedItems === "string"
+          ? JSON.parse(activeRow.todayLoggedItems)
+          : (activeRow.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  let reviewedCount = 0;
+  const updatedItems = await Promise.all(
+    itemsList.map(async (item) => {
+      if (item.category === "food" && (item.aiStatus === "pending" || item.calories === 0)) {
+        reviewedCount++;
+        const aiResult = await reviewFoodItemWithAI(item.rawText || item.name);
+        return {
+          ...item,
+          calories: aiResult.calories,
+          protein: aiResult.protein,
+          carbs: aiResult.carbs,
+          fat: aiResult.fat,
+          portionGrams: aiResult.portionGrams,
+          aiStatus: "reviewed" as const,
+          aiNotes: aiResult.explanation,
+          summary: `🤖 ${item.name} (+${aiResult.calories} kcal, +${aiResult.protein}g protein)`,
+        };
+      }
+      return item;
+    })
+  );
+
+  const newTodayCalories = updatedItems.reduce((acc, curr) => acc + (curr.calories || 0), 0);
+  const newTodayProtein =
+    Math.round(updatedItems.reduce((acc, curr) => acc + (curr.protein || 0), 0) * 10) / 10;
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: newTodayCalories,
+      todayProtein: newTodayProtein,
+      todayLoggedItems: updatedItems,
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, activeRow.id));
+
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: newTodayCalories,
+      protein: newTodayProtein,
+      waterLiters: activeRow.todayWaterLiters ?? 0,
+      walkMinutes: activeRow.todayWalkMinutes ?? 0,
+      trainingCompleted: Boolean(activeRow.todayTrainingCompleted),
+    },
+    updatedItems,
+    {
+      calorieTarget: activeRow.caloriesTarget,
+      proteinTarget: activeRow.proteinMinGrams,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(input?.clientLocalDate);
+  return {
+    success: true,
+    message:
+      reviewedCount > 0
+        ? `AI reviewed ${reviewedCount} meal${reviewedCount > 1 ? "s" : ""} and updated your daily calories.`
+        : "No pending meals needed review.",
+    reviewedCount,
+    goals: updatedGoals,
+  };
+}
+
+/**
+ * Manually update the calories (and protein) of a specific food item,
+ * and immediately recalculate the athlete's daily calorie totals.
+ */
+export async function updateLoggedFoodCaloriesAction(input: {
+  itemId: string;
+  calories: number;
+  protein?: number;
+  notes?: string;
+  clientLocalDate?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  loggedItem?: LoggedItem;
+  goals: DailyGoalsData;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+  const todayDate = getLocalDateString(input.clientLocalDate);
+
+  await getDailyGoalsAction(input.clientLocalDate);
+
+  const existing = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "No goals record found.", goals };
+  }
+
+  const activeRow = existing[0];
+  let itemsList: LoggedItem[] = [];
+  if (activeRow.todayLoggedItems) {
+    try {
+      itemsList =
+        typeof activeRow.todayLoggedItems === "string"
+          ? JSON.parse(activeRow.todayLoggedItems)
+          : (activeRow.todayLoggedItems as LoggedItem[]);
+    } catch {}
+  }
+
+  const itemIndex = itemsList.findIndex((i) => i.id === input.itemId);
+  if (itemIndex === -1) {
+    const goals = await getDailyGoalsAction(input.clientLocalDate);
+    return { success: false, message: "Logged item not found.", goals };
+  }
+
+  const targetItem = itemsList[itemIndex];
+  const newCalories = Math.max(0, Math.round(Number(input.calories) || 0));
+  const newProtein =
+    input.protein !== undefined
+      ? Math.max(0, Math.round(Number(input.protein) * 10) / 10)
+      : targetItem.protein;
+
+  const updatedItem: LoggedItem = {
+    ...targetItem,
+    calories: newCalories,
+    protein: newProtein,
+    aiStatus: "manual",
+    aiNotes: input.notes !== undefined ? input.notes : targetItem.aiNotes,
+    summary: `✏️ ${targetItem.name} (+${newCalories} kcal, +${newProtein}g protein)`,
+  };
+
+  const updatedItems = [...itemsList];
+  updatedItems[itemIndex] = updatedItem;
+
+  const newTodayCalories = updatedItems.reduce((acc, curr) => acc + (curr.calories || 0), 0);
+  const newTodayProtein =
+    Math.round(updatedItems.reduce((acc, curr) => acc + (curr.protein || 0), 0) * 10) / 10;
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: newTodayCalories,
+      todayProtein: newTodayProtein,
+      todayLoggedItems: updatedItems,
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, activeRow.id));
+
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: newTodayCalories,
+      protein: newTodayProtein,
+      waterLiters: activeRow.todayWaterLiters ?? 0,
+      walkMinutes: activeRow.todayWalkMinutes ?? 0,
+      trainingCompleted: Boolean(activeRow.todayTrainingCompleted),
+    },
+    updatedItems,
+    {
+      calorieTarget: activeRow.caloriesTarget,
+      proteinTarget: activeRow.proteinMinGrams,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(input.clientLocalDate);
+  return {
+    success: true,
+    message: `Updated "${targetItem.name}" to ${newCalories} kcal. Daily total updated to ${newTodayCalories} kcal.`,
+    loggedItem: updatedItem,
+    goals: updatedGoals,
+  };
 }
 

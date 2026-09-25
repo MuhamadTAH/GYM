@@ -26,6 +26,8 @@ import {
   ChevronDown,
   ChevronUp,
   CheckCircle,
+  Edit2,
+  Bot,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -38,6 +40,10 @@ import {
   searchFoodDatabaseAction,
   getDailyProgressHistoryAction,
   simulateNewDayRolloverAction,
+  writeUnestimatedFoodAction,
+  reviewFoodWithAIAction,
+  reviewAllPendingFoodsWithAIAction,
+  updateLoggedFoodCaloriesAction,
   type DailyGoalsData,
   type SaveDailyGoalsInput,
   type FoodSearchResultItem,
@@ -85,6 +91,14 @@ export function CaloriesDashboard() {
   const [history, setHistory] = useState<DailyNutritionLogRecord[]>([]);
   const [expandedDayDate, setExpandedDayDate] = useState<string | null>(null);
   const [isSimulatingDay, setIsSimulatingDay] = useState(false);
+
+  // AI Review & Calorie Adjustment State
+  const [reviewingItemId, setReviewingItemId] = useState<string | null>(null);
+  const [isReviewingAllPending, setIsReviewingAllPending] = useState(false);
+  const [editingItem, setEditingItem] = useState<LoggedItem | null>(null);
+  const [editCaloriesInput, setEditCaloriesInput] = useState("");
+  const [editProteinInput, setEditProteinInput] = useState("");
+  const [editNotesInput, setEditNotesInput] = useState("");
 
   const getClientLocalDate = () => {
     const d = new Date();
@@ -356,6 +370,131 @@ export function CaloriesDashboard() {
     });
   };
 
+  // 7. Write Food Without Calorie Counting (Awaiting AI Review)
+  const handleWriteUnestimatedFood = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const name = foodName.trim() || quickInput.trim();
+    if (!name) {
+      showFeedback("Please enter what you ate.", "error");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const res = await writeUnestimatedFoodAction({
+          foodName: name,
+          clientLocalDate: localDate,
+        });
+
+        if (res.success) {
+          setGoals(res.goals);
+          setFoodName("");
+          setGrams("");
+          setQuickInput("");
+          setShowSuggestions(false);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback(`Added "${name}" to list (0 kcal). Click "Review with AI" to calculate calories!`);
+        } else {
+          showFeedback(res.message, "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "Failed to add food", "error");
+      }
+    });
+  };
+
+  // 8. Review Individual Food Item with AI
+  const handleReviewItemWithAI = async (itemId: string) => {
+    setReviewingItemId(itemId);
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const res = await reviewFoodWithAIAction({ itemId, clientLocalDate: localDate });
+        if (res.success) {
+          setGoals(res.goals);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback(res.message);
+        } else {
+          showFeedback(res.message, "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "AI review failed", "error");
+      } finally {
+        setReviewingItemId(null);
+      }
+    });
+  };
+
+  // 9. Batch Review All Pending Unestimated Foods with AI
+  const handleReviewAllPending = async () => {
+    setIsReviewingAllPending(true);
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const res = await reviewAllPendingFoodsWithAIAction({ clientLocalDate: localDate });
+        if (res.success) {
+          setGoals(res.goals);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback(res.message);
+        } else {
+          showFeedback(res.message, "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "Batch AI review failed", "error");
+      } finally {
+        setIsReviewingAllPending(false);
+      }
+    });
+  };
+
+  // 10. Open Edit Food Calories Modal
+  const openEditModal = (item: LoggedItem) => {
+    setEditingItem(item);
+    setEditCaloriesInput(String(item.calories || 0));
+    setEditProteinInput(String(item.protein || 0));
+    setEditNotesInput(item.aiNotes || "");
+  };
+
+  // 11. Save Manual Food Calorie Adjustment
+  const handleSaveEditFoodCalories = async () => {
+    if (!editingItem) return;
+    const calNum = parseFloat(editCaloriesInput);
+    if (isNaN(calNum) || calNum < 0) {
+      showFeedback("Please enter a valid calorie number.", "error");
+      return;
+    }
+    const proNum = editProteinInput.trim() ? parseFloat(editProteinInput) : undefined;
+
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const res = await updateLoggedFoodCaloriesAction({
+          itemId: editingItem.id,
+          calories: calNum,
+          protein: proNum,
+          notes: editNotesInput.trim() || undefined,
+          clientLocalDate: localDate,
+        });
+
+        if (res.success) {
+          setGoals(res.goals);
+          setEditingItem(null);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback(res.message);
+        } else {
+          showFeedback(res.message, "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "Failed to update calories", "error");
+      }
+    });
+  };
+
   // 6. Save Updated Calorie Target
   const handleSaveTarget = async () => {
     const cVal = parseInt(targetCaloriesInput, 10);
@@ -484,6 +623,102 @@ export function CaloriesDashboard() {
                   className="flex-1 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs transition shadow-lg shadow-amber-400/20"
                 >
                   Save Targets
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Food Item Calories Modal */}
+      {editingItem && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-750 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5 animate-scaleIn">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-zinc-100 truncate max-w-[260px]">
+                  Edit: {editingItem.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Food Calories (kcal)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editCaloriesInput}
+                    onChange={(e) => setEditCaloriesInput(e.target.value)}
+                    placeholder="e.g. 450"
+                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                  />
+                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">kcal</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Protein (grams)
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={editProteinInput}
+                    onChange={(e) => setEditProteinInput(e.target.value)}
+                    placeholder="e.g. 35"
+                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-emerald-400"
+                  />
+                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">grams</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Notes / Portion Detail (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editNotesInput}
+                  onChange={(e) => setEditNotesInput(e.target.value)}
+                  placeholder="e.g. Weighed 180g portion, with garlic sauce"
+                  className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+
+              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800 text-[11px] text-zinc-400">
+                ⚡ Changing this food&apos;s calories will immediately recalculate and update your total daily calories.
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingItem(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditFoodCalories}
+                  disabled={isPending}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs transition shadow-lg shadow-amber-400/20 cursor-pointer"
+                >
+                  Save &amp; Update Calories
                 </button>
               </div>
             </div>
@@ -746,6 +981,16 @@ export function CaloriesDashboard() {
                 {/* Suggestions Dropdown (Curated + USDA Database) */}
                 {showSuggestions && (searchSuggestions.length > 0 || filteredSuggestions.length > 0) && (
                   <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl z-30 overflow-hidden max-h-64 overflow-y-auto">
+                    <div className="px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between text-[11px] font-mono text-zinc-400">
+                      <span>Database Suggestions</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowSuggestions(false)}
+                        className="text-zinc-500 hover:text-zinc-200 cursor-pointer"
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
                     {(searchSuggestions.length > 0 ? searchSuggestions : filteredSuggestions).map((item) => {
                       const isUsdaItem = "source" in item && item.source === "usda";
                       const subtitle =
@@ -875,54 +1120,79 @@ export function CaloriesDashboard() {
               </div>
             </div>
 
-            {/* Live Calorie Preview Card */}
-            {foodName.trim() && estimatedMacros && (
-              <div className="bg-zinc-950/80 border border-emerald-500/30 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{estimatedMacros.emoji}</span>
-                  <div>
-                    <div className="text-xs font-bold text-zinc-200 flex items-center gap-2">
-                      <span>
-                        {grams.trim()
-                          ? `${grams}g ${estimatedMacros.name}`
-                          : estimatedMacros.portionDesc || estimatedMacros.name}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">
-                        {grams.trim() ? "EXACT GRAMS" : "PORTION ESTIMATE"}
-                      </span>
+            {/* Primary Action Buttons for Food Entry */}
+            {foodName.trim() ? (
+              <div className="space-y-3 pt-2 animate-fadeIn">
+                {/* 1. Main Action: Write Food without calorie counting (Awaiting AI Review) */}
+                <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border border-amber-400/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-amber-400/5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 shrink-0">
+                      <Sparkles className="w-5 h-5" />
                     </div>
-                    <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-3 mt-0.5">
-                      <span className="text-amber-400 font-bold">~{estimatedMacros.calories} kcal</span>
-                      <span className="text-emerald-400">{estimatedMacros.protein}g Protein</span>
-                      <span>{estimatedMacros.carbs}g Carbs</span>
-                      <span>{estimatedMacros.fat}g Fat</span>
+                    <div>
+                      <div className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                        <span>{foodName.trim()}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-mono">
+                          AWAITING AI REVIEW • 0 KCAL
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        Adds this item to your list with 0 kcal. You can click &quot;Review with AI&quot; anytime to calculate calories!
+                      </p>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={handleWriteUnestimatedFood}
+                    disabled={isPending}
+                    className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-amber-400/20 shrink-0"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>✍️ Write Food (Review with AI)</span>
+                  </button>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-emerald-500/20"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>
-                    {grams.trim()
-                      ? `Log ${grams}g (${estimatedMacros.calories} kcal)`
-                      : `Log ${estimatedMacros.name || foodName} (${estimatedMacros.calories} kcal)`}
-                  </span>
-                </button>
-              </div>
-            )}
+                {/* 2. Optional Instant Log with Estimates */}
+                {estimatedMacros && (
+                  <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xl">{estimatedMacros.emoji}</span>
+                      <div>
+                        <div className="text-xs font-bold text-zinc-300 flex items-center gap-2">
+                          <span>
+                            {grams.trim()
+                              ? `${grams}g ${estimatedMacros.name}`
+                              : estimatedMacros.portionDesc || estimatedMacros.name}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 font-mono">OPTIONAL ESTIMATE</span>
+                        </div>
+                        <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-3 mt-0.5">
+                          <span className="text-amber-400 font-bold">~{estimatedMacros.calories} kcal</span>
+                          <span className="text-emerald-400">{estimatedMacros.protein}g Protein</span>
+                        </div>
+                      </div>
+                    </div>
 
-            {!foodName.trim() && (
+                    <button
+                      type="submit"
+                      disabled={isPending}
+                      className="px-3.5 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-bold text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer border border-zinc-750"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Instant Log (~{estimatedMacros.calories} kcal)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
               <div className="pt-2">
                 <button
-                  type="submit"
+                  type="button"
                   disabled={true}
                   className="w-full py-3 rounded-xl bg-zinc-800 text-zinc-500 font-bold text-xs font-mono flex items-center justify-center gap-2 cursor-not-allowed"
                 >
-                  <span>Type what you ate to log calories (grams weight is optional)</span>
+                  <span>Type what you ate to write food (e.g. &quot;Chicken with rice&quot;, &quot;2 apples&quot;, &quot;Falafel wrap&quot;)</span>
                 </button>
               </div>
             )}
@@ -1055,25 +1325,38 @@ export function CaloriesDashboard() {
         {/* TAB 3: FREE TEXT / NATURAL SPEECH / PRESET BUTTONS */}
         {logMode === "quick" && (
           <div className="space-y-4">
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 value={quickInput}
                 onChange={(e) => setQuickInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleQuickLog();
+                  if (e.key === "Enter") handleWriteUnestimatedFood();
                 }}
-                placeholder='Type naturally, e.g. "I ate 4 boiled eggs and 150g chicken breast"...'
+                placeholder='Type food name, e.g. "Homemade burger", "Chicken shawarma", "Oatmeal"...'
                 className="flex-1 bg-zinc-950 border border-zinc-750 focus:border-amber-400 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none transition font-sans shadow-inner"
               />
-              <button
-                type="button"
-                onClick={() => handleQuickLog()}
-                disabled={!quickInput.trim() || isPending}
-                className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-zinc-800 text-zinc-950 disabled:text-zinc-500 font-bold text-xs font-mono transition cursor-pointer"
-              >
-                Log
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleWriteUnestimatedFood}
+                  disabled={!quickInput.trim() || isPending}
+                  className="px-4 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-zinc-800 text-zinc-950 disabled:text-zinc-500 font-bold text-xs font-mono transition cursor-pointer flex items-center gap-1.5"
+                  title="Add food without calories - ready for AI review"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>✍️ Write (AI Review)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickLog()}
+                  disabled={!quickInput.trim() || isPending}
+                  className="px-3 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 disabled:bg-zinc-900 text-zinc-300 disabled:text-zinc-600 font-bold text-xs font-mono transition cursor-pointer"
+                  title="Instant log with automatic estimates"
+                >
+                  Instant
+                </button>
+              </div>
             </div>
 
             {/* Quick Tap Presets */}
@@ -1120,19 +1403,58 @@ export function CaloriesDashboard() {
             <button
               type="button"
               onClick={handleResetToday}
-              className="text-[11px] font-mono text-zinc-500 hover:text-rose-400 transition"
+              className="text-[11px] font-mono text-zinc-500 hover:text-rose-400 transition cursor-pointer"
             >
               Clear all
             </button>
           )}
         </div>
 
+        {/* Batch AI Review Banner for Unestimated Foods */}
+        {(() => {
+          const pendingCount = eatenItems.filter(
+            (i) => i.category === "food" && (i.aiStatus === "pending" || i.calories === 0)
+          ).length;
+          if (pendingCount === 0) return null;
+
+          return (
+            <div className="bg-amber-400/10 border border-amber-400/30 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-400/20 flex items-center justify-center text-amber-400 shrink-0">
+                  <Bot className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-amber-300 flex items-center gap-2">
+                    <span>{pendingCount} food item{pendingCount > 1 ? "s" : ""} waiting for AI review</span>
+                    <span className="text-[10px] font-mono bg-amber-950 px-2 py-0.5 rounded text-amber-400 border border-amber-800">
+                      0 kcal counted so far
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    Ask AI to analyze your meals and calculate accurate calories &amp; macros into your daily total.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleReviewAllPending}
+                disabled={isPending || isReviewingAllPending}
+                className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md shadow-amber-400/10 shrink-0"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isReviewingAllPending ? "animate-spin" : ""}`} />
+                <span>{isReviewingAllPending ? "AI Reviewing..." : `Review All with AI (${pendingCount})`}</span>
+              </button>
+            </div>
+          );
+        })()}
+
         {eatenItems.length === 0 ? (
           <div className="py-10 text-center space-y-2 border border-dashed border-zinc-800/80 rounded-xl bg-zinc-950/40">
             <Scale className="w-8 h-8 text-zinc-600 mx-auto" />
             <p className="text-xs font-mono text-zinc-400">No meals logged yet today.</p>
             <p className="text-[11px] text-zinc-600">
-              Use the Food + Grams bar above or snap a photo to begin tracking today&apos;s calories.
+              Type what you ate above and click &quot;Write Food&quot; to begin tracking today&apos;s calories.
             </p>
           </div>
         ) : (
@@ -1145,40 +1467,124 @@ export function CaloriesDashboard() {
                   })
                 : "";
 
+              const isFood = item.category === "food";
+              const isPendingReview = isFood && (item.aiStatus === "pending" || item.calories === 0);
+              const isReviewed = item.aiStatus === "reviewed";
+              const isManual = item.aiStatus === "manual";
+              const isBeingReviewed = reviewingItemId === item.id;
+
               return (
                 <div
                   key={item.id}
-                  className="py-3 px-3 rounded-xl hover:bg-zinc-950/50 flex items-center justify-between gap-4 transition group"
+                  className={`py-3.5 px-3 rounded-xl transition group ${
+                    isPendingReview
+                      ? "bg-amber-950/10 border border-amber-500/20 hover:bg-amber-950/20"
+                      : "hover:bg-zinc-950/50"
+                  }`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-zinc-800/80 border border-zinc-750 flex items-center justify-center text-base shrink-0">
-                      {item.summary?.split(" ")[0] || "🍽️"}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-zinc-200 truncate flex items-center gap-2">
-                        <span>{item.name}</span>
-                        {time && <span className="text-[10px] font-mono text-zinc-500 font-normal">at {time}</span>}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-zinc-800/80 border border-zinc-750 flex items-center justify-center text-base shrink-0 mt-0.5 sm:mt-0">
+                        {isPendingReview ? "⏳" : isReviewed ? "🤖" : item.summary?.split(" ")[0] || "🍽️"}
                       </div>
-                      <div className="text-xs font-mono text-zinc-400 flex items-center gap-2">
-                        <span className="text-amber-400 font-bold">+{item.calories} kcal</span>
-                        {item.protein > 0 && (
-                          <span className="text-emerald-400">+{item.protein}g protein</span>
+                      <div className="min-w-0 space-y-1">
+                        <div className="text-sm font-bold text-zinc-200 truncate flex items-center gap-2 flex-wrap">
+                          <span>{item.name}</span>
+                          {time && <span className="text-[10px] font-mono text-zinc-500 font-normal">at {time}</span>}
+
+                          {isPendingReview && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-bold">
+                              ⏳ Awaiting AI Review
+                            </span>
+                          )}
+                          {isReviewed && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
+                              ✨ AI Reviewed
+                            </span>
+                          )}
+                          {isManual && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-950 text-sky-400 border border-sky-800 font-bold">
+                              ✏️ Custom
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 flex-wrap">
+                          {isPendingReview ? (
+                            <span className="text-amber-400/90 font-bold">
+                              0 kcal (Click &quot;Review with AI&quot; to calculate)
+                            </span>
+                          ) : (
+                            <>
+                              <span className="text-amber-400 font-bold">+{item.calories} kcal</span>
+                              {item.protein > 0 && (
+                                <span className="text-emerald-400 font-bold">+{item.protein}g protein</span>
+                              )}
+                              {item.carbs !== undefined && item.carbs > 0 && (
+                                <span className="text-zinc-400">{item.carbs}g carbs</span>
+                              )}
+                              {item.fat !== undefined && item.fat > 0 && (
+                                <span className="text-zinc-400">{item.fat}g fat</span>
+                              )}
+                            </>
+                          )}
+                        </div>
+
+                        {item.aiNotes && (
+                          <div className="text-[11px] font-sans text-zinc-300 bg-zinc-950/70 p-2 rounded-lg border border-zinc-800/80 mt-1.5 flex items-start gap-1.5">
+                            <span className="text-amber-400 shrink-0">💡</span>
+                            <span>{item.aiNotes}</span>
+                          </div>
                         )}
-                        <span className="text-zinc-600 truncate max-w-[200px]">
-                          {item.rawText}
-                        </span>
                       </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                      {isFood && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleReviewItemWithAI(item.id)}
+                            disabled={isPending || isBeingReviewed}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                              isPendingReview
+                                ? "bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 border border-amber-400/40 shadow-sm"
+                                : "bg-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-750"
+                            }`}
+                            title="Ask AI to analyze and calculate calories"
+                          >
+                            <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${isBeingReviewed ? "animate-spin" : ""}`} />
+                            <span>
+                              {isBeingReviewed
+                                ? "Reviewing..."
+                                : isPendingReview
+                                ? "Review with AI"
+                                : "AI Re-check"}
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(item)}
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-sky-300 hover:bg-zinc-800 transition cursor-pointer border border-transparent hover:border-zinc-750"
+                            title="Edit calories & macros"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteItem(item.id)}
+                        className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-950/30 transition shrink-0 cursor-pointer"
+                        title="Delete item"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteItem(item.id)}
-                    className="p-1.5 rounded-lg text-zinc-600 hover:text-rose-400 hover:bg-rose-950/30 transition shrink-0 cursor-pointer"
-                    title="Delete item"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </div>
               );
             })}
