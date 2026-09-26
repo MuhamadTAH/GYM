@@ -33,6 +33,14 @@ export default function Home() {
     setRefreshKey((prev) => prev + 1);
   };
 
+  const navItems = [
+    { id: "cal" as const, label: "Nutrition", icon: Flame },
+    { id: "workout" as const, label: "Workout", icon: Dumbbell },
+    { id: "goals" as const, label: "Targets", icon: Target },
+    { id: "command_center" as const, label: "Program", icon: BarChart3 },
+    { id: "coach" as const, label: "Coach", icon: Bot },
+  ];
+
   return (
     <main className="min-h-screen bg-black text-zinc-100 flex flex-col items-center">
       {/* Global Profile & Baseline 1RMs Modal */}
@@ -42,108 +50,54 @@ export default function Home() {
         onSaved={handleProfileSaved}
       />
 
-      {/* Top App Bar - Responsive for Laptop and Mobile */}
-      <header className="w-full max-w-6xl sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-md px-4 sm:px-6 py-3 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center justify-between sm:justify-start gap-4">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-xs sm:text-sm font-black font-mono tracking-wider text-amber-400">
-              GYM COACH • AUTOREGULATED
-            </span>
-          </div>
-
-          <div className="sm:hidden flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsProfileOpen(true)}
-              className="text-[11px] font-mono px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-750 flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <User className="w-3.5 h-3.5 text-amber-400" />
-              <span>{userName}</span>
-            </button>
-          </div>
+      {/* Top App Bar - Clean, unified gym design system */}
+      <header className="w-full max-w-5xl sticky top-0 z-40 bg-black/90 backdrop-blur-md px-3 sm:px-6 py-2.5 border-b border-zinc-800 flex items-center justify-between gap-3">
+        {/* Brand */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <span className="text-xs sm:text-sm font-bold font-mono tracking-wider text-zinc-100">
+            GYM COACH
+          </span>
         </div>
 
         {/* Tab Navigation */}
-        <div className="grid grid-cols-5 sm:flex items-center bg-zinc-900 p-1 rounded-xl border border-zinc-800 font-mono text-[10px] sm:text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab("cal")}
-            className={`py-2 px-1.5 sm:px-4 rounded-lg font-bold flex items-center justify-center gap-1 sm:gap-2 transition cursor-pointer ${
-              activeTab === "cal"
-                ? "bg-amber-400 text-zinc-950 shadow-md"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            <Flame className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Cal</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("workout")}
-            className={`py-2 px-1.5 sm:px-4 rounded-lg font-bold flex items-center justify-center gap-1 sm:gap-2 transition cursor-pointer ${
-              activeTab === "workout"
-                ? "bg-emerald-500 text-zinc-950 shadow-md"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            <Dumbbell className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Workout</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("goals")}
-            className={`py-2 px-1.5 sm:px-4 rounded-lg font-bold flex items-center justify-center gap-1 sm:gap-2 transition cursor-pointer ${
-              activeTab === "goals"
-                ? "bg-sky-400 text-zinc-950 shadow-md"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            <Target className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Goals</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("command_center")}
-            className={`py-2 px-1.5 sm:px-4 rounded-lg font-bold flex items-center justify-center gap-1 sm:gap-2 transition cursor-pointer ${
-              activeTab === "command_center"
-                ? "bg-indigo-600 text-white shadow-md"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Plan</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("coach")}
-            className={`py-2 px-1.5 sm:px-4 rounded-lg font-bold flex items-center justify-center gap-1 sm:gap-2 transition cursor-pointer ${
-              activeTab === "coach"
-                ? "bg-purple-600 text-white shadow-md"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>AI Coach</span>
-          </button>
-        </div>
+        <nav className="flex items-center bg-zinc-900/90 p-1 rounded-xl border border-zinc-800 text-xs font-mono">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id)}
+                className={`py-1.5 px-2.5 sm:px-3.5 rounded-lg font-bold flex items-center gap-1.5 transition cursor-pointer text-[11px] sm:text-xs ${
+                  isActive
+                    ? "bg-amber-400 text-zinc-950 shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span className={isActive ? "inline" : "hidden sm:inline"}>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* Desktop Profile / 1RMs button */}
-        <div className="hidden sm:flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIsProfileOpen(true)}
-            className="text-xs font-mono px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-750 flex items-center gap-2 transition cursor-pointer"
-          >
-            <User className="w-3.5 h-3.5 text-amber-400" />
-            <span className="font-bold">{userName} / 1RMs</span>
-          </button>
-        </div>
+        {/* Profile Button */}
+        <button
+          type="button"
+          onClick={() => setIsProfileOpen(true)}
+          className="text-xs font-mono px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+          title="Profile & Baseline 1RMs"
+        >
+          <User className="w-3.5 h-3.5 text-amber-400" />
+          <span className="hidden sm:inline font-semibold">{userName}</span>
+        </button>
       </header>
 
-      {/* Main Tab Content View - Responsive Width */}
-      <div key={refreshKey} className="w-full max-w-6xl flex-1 px-3 sm:px-6 py-4">
-        {/* Pinned Daily Morning Briefing Banner */}
+      {/* Main Tab Content View */}
+      <div key={refreshKey} className="w-full max-w-5xl flex-1 px-3 sm:px-6 py-4">
+        {/* Compact Daily Morning Briefing Banner */}
         <ActiveDayBriefing
           onNavigateToHud={() => setActiveTab("workout")}
           onNavigateToGoals={() => setActiveTab("cal")}

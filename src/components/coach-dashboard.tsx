@@ -247,9 +247,9 @@ export function CoachDashboard() {
   };
 
   return (
-    <div className="w-full flex flex-col lg:flex-row h-[calc(100vh-135px)] max-h-[840px] bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl mt-3">
+    <div className="w-full flex flex-col lg:flex-row h-[calc(100vh-140px)] max-h-[840px] bg-zinc-950 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-sm">
       {/* LAPTOP SIDEBAR: Telemetry, Quick Shortcuts & MCP Status */}
-      <aside className="hidden lg:flex flex-col w-80 shrink-0 border-r border-zinc-800 bg-zinc-900/50 p-4 justify-between font-mono">
+      <aside className="hidden lg:flex flex-col w-72 shrink-0 border-r border-zinc-850 bg-zinc-900/40 p-4 justify-between font-mono">
         <div className="space-y-4">
           {/* Athlete Intercom Header */}
           <div className="flex items-center gap-3 p-3 rounded-xl bg-zinc-950 border border-zinc-850">

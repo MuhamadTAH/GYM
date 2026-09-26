@@ -94,7 +94,7 @@ export function CommandCenter() {
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto min-h-screen bg-zinc-950 text-zinc-100 flex flex-col p-4 pb-20 select-none">
+    <div className="w-full space-y-4 font-sans text-zinc-100 pb-16">
       {/* Profile & 1RMs Modal */}
       <ProfileModal
         isOpen={isProfileOpen}
@@ -103,29 +103,29 @@ export function CommandCenter() {
       />
 
       {/* Header */}
-      <header className="flex items-center justify-between pb-3 border-b border-zinc-800">
+      <div className="flex items-center justify-between gap-2 flex-wrap bg-zinc-950 border border-zinc-800/80 p-3 sm:p-4 rounded-2xl">
         <div className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-indigo-400" />
-          <span className="text-xs font-mono tracking-wider uppercase text-zinc-400">
-            Command Center • Metabolic & Block Engine
-          </span>
+          <BarChart3 className="w-4 h-4 text-amber-400" />
+          <h1 className="text-sm font-bold font-mono tracking-wider text-zinc-200 uppercase">
+            Training Program &amp; Periodization
+          </h1>
         </div>
         <button
           type="button"
           onClick={() => setIsProfileOpen(true)}
-          className="text-xs font-mono px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer"
+          className="text-xs font-mono px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-850 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer"
         >
-          <User className="w-3.5 h-3.5 text-emerald-400" />
+          <User className="w-3.5 h-3.5 text-amber-400" />
           <span>{userName}</span>
         </button>
-      </header>
+      </div>
 
-      {/* Responsive 2-Column Grid for Laptop/Desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-4">
+      {/* Responsive 2-Column Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Left Column: Metabolic Partitioning & Volume Targets */}
-        <div className="space-y-5">
+        <div className="space-y-4">
           {/* METABOLIC & MACRO PANEL */}
-          <section className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl">
+          <section className="p-4 sm:p-5 rounded-2xl bg-zinc-950 border border-zinc-800/80 shadow-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Flame className="w-5 h-5 text-orange-400" />

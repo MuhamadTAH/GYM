@@ -10,24 +10,18 @@ import {
   RefreshCw,
   Sparkles,
   Check,
-  Send,
   Sliders,
   Scale,
   X,
   AlertCircle,
   Beef,
-  Wheat,
-  Droplet,
-  ChevronRight,
-  Upload,
+  ChevronDown,
+  ChevronUp,
+  Edit2,
+  Bot,
   Calendar,
   History,
   FastForward,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle,
-  Edit2,
-  Bot,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -35,7 +29,6 @@ import {
   logNaturalEntryAction,
   deleteLoggedItemAction,
   resetDailyTrackingAction,
-  scanMealImageAction,
   estimateFoodMacrosAction,
   searchFoodDatabaseAction,
   getDailyProgressHistoryAction,
@@ -58,37 +51,22 @@ export function CaloriesDashboard() {
   const [isPending, startTransition] = useTransition();
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  // Active Logging Mode: "grams" (Name + Grams), "camera" (Image Scan), "quick" (Free Text)
-  const [logMode, setLogMode] = useState<"grams" | "camera" | "quick">("grams");
-
-  // Mode 1: Food Name + Grams state (Grams is completely optional)
+  // Unified Food Entry State
   const [foodName, setFoodName] = useState("");
   const [grams, setGrams] = useState<string>("");
   const [estimatedMacros, setEstimatedMacros] = useState<EstimatedMacroResult | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState<FoodSearchResultItem[]>([]);
 
-  // Mode 2: In-page Camera / Image state
+  // Modals state
   const [isMealScanModalOpen, setIsMealScanModalOpen] = useState(false);
-  const [selectedImageBase64, setSelectedImageBase64] = useState<string | null>(null);
-  const [isScanningImage, setIsScanningImage] = useState(false);
-  const [scannedMealResult, setScannedMealResult] = useState<{
-    mealName: string;
-    items: { name: string; estimatedGrams: number; calories: number; protein: number }[];
-    totalCalories: number;
-    totalProtein: number;
-  } | null>(null);
-
-  // Mode 3: Quick free-form text input
-  const [quickInput, setQuickInput] = useState("");
-
-  // Edit Calorie Target Modal state
   const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
   const [targetCaloriesInput, setTargetCaloriesInput] = useState("");
   const [targetProteinInput, setTargetProteinInput] = useState("");
 
-  // Day-by-Day Progress History state
+  // History State
   const [history, setHistory] = useState<DailyNutritionLogRecord[]>([]);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [expandedDayDate, setExpandedDayDate] = useState<string | null>(null);
   const [isSimulatingDay, setIsSimulatingDay] = useState(false);
 
@@ -135,7 +113,7 @@ export function CaloriesDashboard() {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  // Update real-time macro estimation when foodName or grams change
+  // Real-time macro preview
   useEffect(() => {
     const trimmed = foodName.trim();
     if (!trimmed) {
@@ -148,7 +126,7 @@ export function CaloriesDashboard() {
     });
   }, [foodName, grams]);
 
-  // Search food database (curated + USDA) as user types
+  // Autocomplete search
   useEffect(() => {
     const trimmed = foodName.trim();
     if (!trimmed || trimmed.length < 2) {
@@ -165,14 +143,49 @@ export function CaloriesDashboard() {
     return () => clearTimeout(timer);
   }, [foodName]);
 
-  // Flash status message
   const showFeedback = (text: string, type: "success" | "error" = "success") => {
     setStatusMessage({ text, type });
-    setTimeout(() => setStatusMessage(null), 4000);
+    setTimeout(() => setStatusMessage(null), 3500);
   };
 
-  // 1. Log by Food Name & Grams (Grams weight is optional)
-  const handleLogByGrams = async (e?: React.FormEvent) => {
+  // 1. Write Food (Awaiting AI Review with 0 kcal)
+  const handleWriteUnestimatedFood = async () => {
+    const name = foodName.trim();
+    if (!name) {
+      showFeedback("Please enter a food name.", "error");
+      return;
+    }
+
+    const gVal = grams.trim() ? parseFloat(grams) : undefined;
+
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const effectiveFoodName = gVal && gVal > 0 ? `${gVal}g ${name}` : name;
+        const res = await writeUnestimatedFoodAction({
+          foodName: effectiveFoodName,
+          clientLocalDate: localDate,
+        });
+
+        if (res.success) {
+          setGoals(res.goals);
+          setFoodName("");
+          setGrams("");
+          setShowSuggestions(false);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback(res.message);
+        } else {
+          showFeedback(res.message, "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "Failed to write food", "error");
+      }
+    });
+  };
+
+  // 2. Quick Log (Instant estimate)
+  const handleQuickLog = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const name = foodName.trim();
     if (!name) {
@@ -205,11 +218,12 @@ export function CaloriesDashboard() {
         if (res.success) {
           setGoals(res.goals);
           setFoodName("");
-          setGrams(""); // Keep weight empty/optional for the next meal
+          setGrams("");
           setEstimatedMacros(null);
+          setShowSuggestions(false);
           const hist = await getDailyProgressHistoryAction(14, localDate);
           setHistory(hist);
-          showFeedback(`Logged ${loggedText} (+${macros.calories} kcal, +${macros.protein}g protein)`);
+          showFeedback(`Logged ${loggedText} (+${macros.calories} kcal)`);
         } else {
           showFeedback(res.message, "error");
         }
@@ -219,193 +233,7 @@ export function CaloriesDashboard() {
     });
   };
 
-  // 2. Handle Image Selection & In-line Camera
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      showFeedback("Please select an image file (JPEG, PNG, WebP).", "error");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      setSelectedImageBase64(base64);
-      setIsScanningImage(true);
-
-      try {
-        const scanRes = await scanMealImageAction(base64, file.type);
-        if (scanRes.meal) {
-          setScannedMealResult({
-            mealName: scanRes.meal.mealName,
-            items: scanRes.meal.items,
-            totalCalories: scanRes.meal.totalCalories,
-            totalProtein: scanRes.meal.totalProteinGrams,
-          });
-          showFeedback(`AI identified: ${scanRes.meal.mealName} (~${scanRes.meal.totalCalories} kcal)`);
-        } else {
-          showFeedback(scanRes.error || "Could not analyze image.", "error");
-        }
-      } catch (err: unknown) {
-        showFeedback(err instanceof Error ? err.message : "Scanning failed.", "error");
-      } finally {
-        setIsScanningImage(false);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Confirm and Log In-line Scanned Meal
-  const handleConfirmScannedMeal = async () => {
-    if (!scannedMealResult) return;
-
-    startTransition(async () => {
-      try {
-        const localDate = getClientLocalDate();
-        const res = await logNaturalEntryAction({
-          text: scannedMealResult.mealName,
-          calories: scannedMealResult.totalCalories,
-          protein: scannedMealResult.totalProtein,
-          clientLocalDate: localDate,
-        });
-
-        if (res.success) {
-          setGoals(res.goals);
-          setSelectedImageBase64(null);
-          setScannedMealResult(null);
-          const hist = await getDailyProgressHistoryAction(14, localDate);
-          setHistory(hist);
-          showFeedback(
-            `Logged scanned meal: ${scannedMealResult.mealName} (+${scannedMealResult.totalCalories} kcal, +${scannedMealResult.totalProtein}g protein)`
-          );
-        } else {
-          showFeedback(res.message, "error");
-        }
-      } catch (err: unknown) {
-        showFeedback(err instanceof Error ? err.message : "Failed to log scanned meal.", "error");
-      }
-    });
-  };
-
-  // 3. Quick Free-form / One-Tap preset logging
-  const handleQuickLog = async (textToLog?: string) => {
-    const text = (textToLog || quickInput).trim();
-    if (!text) return;
-
-    startTransition(async () => {
-      try {
-        const localDate = getClientLocalDate();
-        const res = await logNaturalEntryAction({ text, clientLocalDate: localDate });
-        if (res.success) {
-          setGoals(res.goals);
-          if (!textToLog) setQuickInput("");
-          const hist = await getDailyProgressHistoryAction(14, localDate);
-          setHistory(hist);
-          showFeedback(`Logged: "${text}" (+${res.loggedItem?.calories || 0} kcal)`);
-        } else {
-          showFeedback(res.message, "error");
-        }
-      } catch (err: unknown) {
-        showFeedback(err instanceof Error ? err.message : "Failed to log entry.", "error");
-      }
-    });
-  };
-
-  // 4. Delete Logged Item
-  const handleDeleteItem = async (itemId: string) => {
-    startTransition(async () => {
-      try {
-        const res = await deleteLoggedItemAction(itemId);
-        if (res.success) {
-          setGoals(res.goals);
-          const hist = await getDailyProgressHistoryAction(14, getClientLocalDate());
-          setHistory(hist);
-          showFeedback("Item removed and calories updated.");
-        }
-      } catch (err) {
-        console.error("Failed to delete item:", err);
-      }
-    });
-  };
-
-  // 5. Reset Today's Calories
-  const handleResetToday = async () => {
-    if (!window.confirm("Reset today's calories and meals back to zero?")) return;
-    startTransition(async () => {
-      try {
-        const res = await resetDailyTrackingAction();
-        if (res.goals) {
-          setGoals(res.goals);
-          const hist = await getDailyProgressHistoryAction(14, getClientLocalDate());
-          setHistory(hist);
-        }
-        showFeedback("Today's calories reset to 0.");
-      } catch (err) {
-        console.error("Failed to reset daily calories:", err);
-      }
-    });
-  };
-
-  // 6. Simulate or Advance to New Day (Archives today to progress & resets to 0 kcal)
-  const handleSimulateNewDay = async () => {
-    if (!window.confirm("Advance to a New Day? Today's intake will be saved to your Progress History, and today's counter will be reset to 0 so you can fill your new day!")) return;
-    setIsSimulatingDay(true);
-    startTransition(async () => {
-      try {
-        const res = await simulateNewDayRolloverAction();
-        if (res.success) {
-          setGoals(res.goals);
-          const hist = await getDailyProgressHistoryAction(14, res.goals.lastActiveDate || getClientLocalDate());
-          setHistory(hist);
-          showFeedback(res.message);
-        }
-      } catch (err) {
-        console.error("Failed to advance to new day:", err);
-        showFeedback("Failed to roll over to new day.", "error");
-      } finally {
-        setIsSimulatingDay(false);
-      }
-    });
-  };
-
-  // 7. Write Food Without Calorie Counting (Awaiting AI Review)
-  const handleWriteUnestimatedFood = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const name = foodName.trim() || quickInput.trim();
-    if (!name) {
-      showFeedback("Please enter what you ate.", "error");
-      return;
-    }
-
-    startTransition(async () => {
-      try {
-        const localDate = getClientLocalDate();
-        const res = await writeUnestimatedFoodAction({
-          foodName: name,
-          clientLocalDate: localDate,
-        });
-
-        if (res.success) {
-          setGoals(res.goals);
-          setFoodName("");
-          setGrams("");
-          setQuickInput("");
-          setShowSuggestions(false);
-          const hist = await getDailyProgressHistoryAction(14, localDate);
-          setHistory(hist);
-          showFeedback(`Added "${name}" to list (0 kcal). Click "Review with AI" to calculate calories!`);
-        } else {
-          showFeedback(res.message, "error");
-        }
-      } catch (err: unknown) {
-        showFeedback(err instanceof Error ? err.message : "Failed to add food", "error");
-      }
-    });
-  };
-
-  // 8. Review Individual Food Item with AI
+  // 3. AI Review single item
   const handleReviewItemWithAI = async (itemId: string) => {
     setReviewingItemId(itemId);
     startTransition(async () => {
@@ -428,7 +256,7 @@ export function CaloriesDashboard() {
     });
   };
 
-  // 9. Batch Review All Pending Unestimated Foods with AI
+  // 4. Batch Review All Pending
   const handleReviewAllPending = async () => {
     setIsReviewingAllPending(true);
     startTransition(async () => {
@@ -444,14 +272,72 @@ export function CaloriesDashboard() {
           showFeedback(res.message, "error");
         }
       } catch (err: unknown) {
-        showFeedback(err instanceof Error ? err.message : "Batch AI review failed", "error");
+        showFeedback(err instanceof Error ? err.message : "Batch review failed", "error");
       } finally {
         setIsReviewingAllPending(false);
       }
     });
   };
 
-  // 10. Open Edit Food Calories Modal
+  // 5. Delete Food Item
+  const handleDeleteItem = async (itemId: string) => {
+    startTransition(async () => {
+      try {
+        const res = await deleteLoggedItemAction(itemId);
+        if (res.success) {
+          setGoals(res.goals);
+          const localDate = getClientLocalDate();
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback("Item deleted.");
+        }
+      } catch {
+        showFeedback("Failed to delete item.", "error");
+      }
+    });
+  };
+
+  // 6. Reset Today
+  const handleResetToday = async () => {
+    if (!window.confirm("Reset today's calories and meals to 0?")) return;
+    startTransition(async () => {
+      try {
+        const res = await resetDailyTrackingAction();
+        if (res.success) {
+          setGoals(res.goals);
+          const localDate = getClientLocalDate();
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback("Today's tracking reset to 0.");
+        }
+      } catch {
+        showFeedback("Failed to reset.", "error");
+      }
+    });
+  };
+
+  // 7. Advance / Simulate New Day
+  const handleSimulateNewDay = async () => {
+    setIsSimulatingDay(true);
+    startTransition(async () => {
+      try {
+        const res = await simulateNewDayRolloverAction();
+        if (res.success) {
+          setGoals(res.goals);
+          const localDate = getClientLocalDate();
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          showFeedback("New day started: Yesterday archived to history.");
+        }
+      } catch {
+        showFeedback("Failed to advance day.", "error");
+      } finally {
+        setIsSimulatingDay(false);
+      }
+    });
+  };
+
+  // 8. Open Edit Food Modal
   const openEditModal = (item: LoggedItem) => {
     setEditingItem(item);
     setEditCaloriesInput(String(item.calories || 0));
@@ -459,12 +345,12 @@ export function CaloriesDashboard() {
     setEditNotesInput(item.aiNotes || "");
   };
 
-  // 11. Save Manual Food Calorie Adjustment
+  // 9. Save Edit Food Modal
   const handleSaveEditFoodCalories = async () => {
     if (!editingItem) return;
     const calNum = parseFloat(editCaloriesInput);
     if (isNaN(calNum) || calNum < 0) {
-      showFeedback("Please enter a valid calorie number.", "error");
+      showFeedback("Please enter valid calories.", "error");
       return;
     }
     const proNum = editProteinInput.trim() ? parseFloat(editProteinInput) : undefined;
@@ -495,7 +381,7 @@ export function CaloriesDashboard() {
     });
   };
 
-  // 6. Save Updated Calorie Target
+  // 10. Save Target Modal
   const handleSaveTarget = async () => {
     const cVal = parseInt(targetCaloriesInput, 10);
     const pVal = parseInt(targetProteinInput, 10);
@@ -514,14 +400,14 @@ export function CaloriesDashboard() {
         const res = await saveDailyGoalsAction(payload);
         if (res.goals) setGoals(res.goals);
         setIsTargetModalOpen(false);
-        showFeedback(`Daily calorie target updated to ${cVal} kcal.`);
+        showFeedback(`Target set to ${cVal} kcal.`);
       } catch (err) {
         console.error("Failed to save target:", err);
       }
     });
   };
 
-  // Metrics calculations
+  // Calculated metrics
   const caloriesEaten = Math.round(goals?.todayCalories || 0);
   const caloriesTarget = goals?.caloriesTarget || 1900;
   const caloriesRemaining = caloriesTarget - caloriesEaten;
@@ -530,22 +416,25 @@ export function CaloriesDashboard() {
   const proteinEaten = Math.round((goals?.todayProtein || 0) * 10) / 10;
   const proteinTarget = goals?.proteinMinGrams || 65;
 
-  // Food history (filter out non-food if any, showing all eaten items)
   const eatenItems = (goals?.todayLoggedItems || []).filter(
     (item) => item.category === "food" || item.calories > 0
   );
 
-  // Filter food database suggestions as user types
+  const pendingCount = eatenItems.filter(
+    (i) => i.category === "food" && (i.aiStatus === "pending" || i.calories === 0)
+  ).length;
+
   const filteredSuggestions = foodName.trim()
-    ? FOOD_DATABASE.filter((f) =>
-        f.displayName.toLowerCase().includes(foodName.toLowerCase().trim()) ||
-        f.aliases.some((a) => a.toLowerCase().includes(foodName.toLowerCase().trim()))
+    ? FOOD_DATABASE.filter(
+        (f) =>
+          f.displayName.toLowerCase().includes(foodName.toLowerCase().trim()) ||
+          f.aliases.some((a) => a.toLowerCase().includes(foodName.toLowerCase().trim()))
       ).slice(0, 5)
     : [];
 
   return (
-    <div className="w-full space-y-6 animate-fadeIn pb-12 font-sans">
-      {/* Optional Modal for Full Camera/File Scan */}
+    <div className="w-full space-y-4 font-sans text-zinc-100">
+      {/* Optional Photo Scan Modal */}
       <MealScanModal
         isOpen={isMealScanModalOpen}
         onClose={() => setIsMealScanModalOpen(false)}
@@ -558,71 +447,63 @@ export function CaloriesDashboard() {
       {/* Target Setting Modal */}
       {isTargetModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-750 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5 animate-scaleIn">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Flame className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base font-bold text-zinc-100">Set Daily Calorie Target</h3>
+                <Flame className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-zinc-100">Daily Calorie Target</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsTargetModalOpen(false)}
-                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition"
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
-                  Target Daily Calories (kcal)
+                  Target Calories (kcal)
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={targetCaloriesInput}
-                    onChange={(e) => setTargetCaloriesInput(e.target.value)}
-                    placeholder="e.g. 1900"
-                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
-                  />
-                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">kcal</span>
-                </div>
-                <p className="text-[11px] text-zinc-500 mt-1">
-                  1,900 kcal is optimal for steady fat loss deficit while preserving lean muscle.
-                </p>
+                <input
+                  type="number"
+                  value={targetCaloriesInput}
+                  onChange={(e) => setTargetCaloriesInput(e.target.value)}
+                  placeholder="e.g. 1900"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
-                  Minimum Daily Protein (g)
+                  Protein Goal (grams)
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={targetProteinInput}
-                    onChange={(e) => setTargetProteinInput(e.target.value)}
-                    placeholder="e.g. 65"
-                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-emerald-400"
-                  />
-                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">grams</span>
-                </div>
+                <input
+                  type="number"
+                  value={targetProteinInput}
+                  onChange={(e) => setTargetProteinInput(e.target.value)}
+                  placeholder="e.g. 65"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsTargetModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold text-xs transition"
+                  className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveTarget}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs transition shadow-lg shadow-amber-400/20"
+                  disabled={isPending}
+                  className="flex-1 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs transition cursor-pointer"
                 >
-                  Save Targets
+                  Save Target
                 </button>
               </div>
             </div>
@@ -630,14 +511,14 @@ export function CaloriesDashboard() {
         </div>
       )}
 
-      {/* Edit Food Item Calories Modal */}
+      {/* Edit Food Calories Modal */}
       {editingItem && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-750 w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-5 animate-scaleIn">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Edit2 className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base font-bold text-zinc-100 truncate max-w-[260px]">
+                <Edit2 className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-zinc-100 truncate">
                   Edit: {editingItem.name}
                 </h3>
               </div>
@@ -646,69 +527,56 @@ export function CaloriesDashboard() {
                 onClick={() => setEditingItem(null)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
-                  Food Calories (kcal)
+                  Calories (kcal)
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={editCaloriesInput}
-                    onChange={(e) => setEditCaloriesInput(e.target.value)}
-                    placeholder="e.g. 450"
-                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
-                  />
-                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">kcal</span>
-                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={editCaloriesInput}
+                  onChange={(e) => setEditCaloriesInput(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
                   Protein (grams)
                 </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={editProteinInput}
-                    onChange={(e) => setEditProteinInput(e.target.value)}
-                    placeholder="e.g. 35"
-                    className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2.5 text-lg font-bold font-mono text-zinc-100 focus:outline-none focus:border-emerald-400"
-                  />
-                  <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500">grams</span>
-                </div>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={editProteinInput}
+                  onChange={(e) => setEditProteinInput(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-mono text-zinc-400 mb-1">
-                  Notes / Portion Detail (Optional)
+                  Portion Notes (Optional)
                 </label>
                 <input
                   type="text"
                   value={editNotesInput}
                   onChange={(e) => setEditNotesInput(e.target.value)}
-                  placeholder="e.g. Weighed 180g portion, with garlic sauce"
-                  className="w-full bg-zinc-950 border border-zinc-750 rounded-xl px-4 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-500"
+                  placeholder="e.g. 180g portion"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700"
                 />
-              </div>
-
-              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800 text-[11px] text-zinc-400">
-                ⚡ Changing this food&apos;s calories will immediately recalculate and update your total daily calories.
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setEditingItem(null)}
-                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-300 font-bold text-xs transition cursor-pointer"
+                  className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -716,9 +584,9 @@ export function CaloriesDashboard() {
                   type="button"
                   onClick={handleSaveEditFoodCalories}
                   disabled={isPending}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs transition shadow-lg shadow-amber-400/20 cursor-pointer"
+                  className="flex-1 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs transition cursor-pointer"
                 >
-                  Save &amp; Update Calories
+                  Save &amp; Update
                 </button>
               </div>
             </div>
@@ -729,674 +597,282 @@ export function CaloriesDashboard() {
       {/* Floating Status Notification */}
       {statusMessage && (
         <div
-          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl border text-xs font-mono shadow-2xl flex items-center gap-2 animate-slideUp ${
+          className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl border text-xs font-mono shadow-xl flex items-center gap-2 ${
             statusMessage.type === "success"
-              ? "bg-zinc-900 border-emerald-500 text-emerald-300 shadow-emerald-500/10"
-              : "bg-zinc-900 border-rose-500 text-rose-300 shadow-rose-500/10"
+              ? "bg-zinc-900 border-emerald-500 text-emerald-300"
+              : "bg-zinc-900 border-rose-500 text-rose-300"
           }`}
         >
           {statusMessage.type === "success" ? (
-            <Check className="w-4 h-4 text-emerald-400" />
+            <Check className="w-3.5 h-3.5 text-emerald-400" />
           ) : (
-            <AlertCircle className="w-4 h-4 text-rose-400" />
+            <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
           )}
           <span>{statusMessage.text}</span>
         </div>
       )}
 
-      {/* SECTION 1: HERO CALORIE COUNTER */}
-      <div className="bg-gradient-to-b from-zinc-900/90 to-zinc-950 border border-zinc-800 rounded-2xl p-5 sm:p-7 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
-
-        {/* Top Control Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-6 border-b border-zinc-800/80">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 shadow-inner">
-              <Flame className="w-5 h-5 fill-amber-400/20" />
-            </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                <span>DAILY CALORIES</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-400 border border-amber-400/30">
-                  DEFICIT TRACKER
-                </span>
-              </h1>
-              <div className="flex items-center gap-2 flex-wrap text-xs text-zinc-400 mt-0.5">
-                <span className="flex items-center gap-1 text-amber-400 font-mono font-bold">
-                  <Calendar className="w-3.5 h-3.5" />
-                  {goals?.lastActiveDate || getClientLocalDate()}
-                </span>
-                <span className="text-zinc-600">•</span>
-                <span className="text-emerald-400 font-mono text-[11px]">
-                  Daily Reset &amp; Progress Active
-                </span>
-              </div>
-            </div>
+      {/* 1. DAILY FUEL STATUS CARD */}
+      <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
+        {/* Header Controls */}
+        <div className="flex items-center justify-between gap-2 flex-wrap border-b border-zinc-850 pb-3">
+          <div className="flex items-center gap-2">
+            <Flame className="w-4 h-4 text-amber-400" />
+            <h1 className="text-sm font-bold font-mono tracking-wider text-zinc-200">
+              DAILY CALORIES
+            </h1>
+            <span className="text-[11px] font-mono text-zinc-500">
+              {goals?.lastActiveDate || getClientLocalDate()}
+            </span>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
               onClick={handleSimulateNewDay}
               disabled={isPending || isSimulatingDay}
-              className="px-3 py-1.5 rounded-lg bg-zinc-850 hover:bg-amber-400/20 text-zinc-300 hover:text-amber-300 border border-zinc-750 hover:border-amber-400/40 text-xs font-mono flex items-center gap-1.5 transition cursor-pointer"
-              title="Advance to new day (archives today's calories to progress history and resets today's tracking to 0)"
+              className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 text-xs font-mono flex items-center gap-1 transition cursor-pointer"
+              title="Archive today to history and reset today to 0"
             >
-              <FastForward className={`w-3.5 h-3.5 text-amber-400 ${isSimulatingDay ? "animate-pulse" : ""}`} />
+              <FastForward className="w-3 h-3 text-amber-400" />
               <span>New Day</span>
             </button>
             <button
               type="button"
               onClick={() => setIsTargetModalOpen(true)}
-              className="px-3 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-750 text-xs font-mono flex items-center gap-1.5 transition cursor-pointer"
-              title="Edit target calories"
+              className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 text-xs font-mono flex items-center gap-1 transition cursor-pointer"
             >
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              <span>Target: {caloriesTarget} kcal</span>
+              <Sliders className="w-3 h-3 text-amber-400" />
+              <span>Target: {caloriesTarget}</span>
             </button>
             <button
               type="button"
               onClick={refreshData}
               disabled={isPending}
-              className="p-2 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-750 transition cursor-pointer"
-              title="Refresh"
+              className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition cursor-pointer"
+              title="Refresh data"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isPending ? "animate-spin" : ""}`} />
             </button>
             <button
               type="button"
               onClick={handleResetToday}
-              className="px-2.5 py-1.5 rounded-lg bg-zinc-850 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 border border-zinc-750 hover:border-rose-900/50 text-xs font-mono flex items-center gap-1 transition cursor-pointer"
-              title="Reset today's calories to 0"
+              className="p-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-500 hover:text-rose-400 border border-zinc-800 transition cursor-pointer"
+              title="Reset today's calories"
             >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset</span>
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        {/* Primary Calorie Display Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 items-center">
-          {/* Main Calorie Gauge */}
-          <div className="md:col-span-2 space-y-3">
+        {/* Primary Numbers */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+          {/* Main Calorie Progress */}
+          <div className="sm:col-span-2 space-y-2">
             <div className="flex items-baseline justify-between">
               <div>
-                <span className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white">
+                <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
                   {caloriesEaten.toLocaleString()}
                 </span>
-                <span className="text-base sm:text-lg font-mono text-zinc-400 ml-2">
+                <span className="text-sm font-mono text-zinc-400 ml-2">
                   / {caloriesTarget.toLocaleString()} kcal
                 </span>
               </div>
-              <div className="text-right">
-                <span
-                  className={`text-sm sm:text-base font-bold font-mono ${
-                    caloriesRemaining >= 0 ? "text-emerald-400" : "text-rose-400"
-                  }`}
-                >
-                  {caloriesRemaining >= 0
-                    ? `${caloriesRemaining.toLocaleString()} kcal remaining`
-                    : `${Math.abs(caloriesRemaining).toLocaleString()} kcal over`}
-                </span>
-              </div>
+              <span
+                className={`text-xs font-mono font-bold px-2 py-0.5 rounded-md border ${
+                  caloriesRemaining >= 0
+                    ? "bg-emerald-950/60 text-emerald-400 border-emerald-800/60"
+                    : "bg-rose-950/60 text-rose-400 border-rose-800/60"
+                }`}
+              >
+                {caloriesRemaining >= 0
+                  ? `${caloriesRemaining.toLocaleString()} kcal remaining`
+                  : `${Math.abs(caloriesRemaining).toLocaleString()} kcal over`}
+              </span>
             </div>
 
-            {/* Custom Progress Bar */}
-            <div className="w-full h-3.5 bg-zinc-800/80 rounded-full overflow-hidden p-0.5 border border-zinc-750">
+            <div className="w-full h-2.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
               <div
-                className={`h-full rounded-full transition-all duration-700 ${
-                  caloriePercent > 100
-                    ? "bg-gradient-to-r from-amber-500 to-rose-500"
-                    : "bg-gradient-to-r from-emerald-500 to-amber-400"
+                className={`h-full rounded-full transition-all duration-500 ${
+                  caloriePercent > 100 ? "bg-rose-500" : "bg-amber-400"
                 }`}
                 style={{ width: `${Math.min(100, caloriePercent)}%` }}
               />
             </div>
-
-            <div className="flex items-center justify-between text-xs font-mono text-zinc-500 pt-1">
-              <span>0 kcal</span>
-              <span className="text-zinc-400">{caloriePercent}% of daily budget</span>
-              <span>{caloriesTarget.toLocaleString()} kcal</span>
-            </div>
           </div>
 
-          {/* Quick Macro Cards */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                <span className="flex items-center gap-1 text-emerald-400">
-                  <Beef className="w-3.5 h-3.5" /> Protein
-                </span>
-                <span>{proteinTarget}g goal</span>
-              </div>
-              <div className="text-xl font-black font-mono text-white">
-                {proteinEaten}g
-              </div>
-              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full transition-all"
-                  style={{ width: `${Math.min(100, (proteinEaten / proteinTarget) * 100)}%` }}
-                />
-              </div>
+          {/* Protein Metric */}
+          <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-850 space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <Beef className="w-3.5 h-3.5" /> Protein
+              </span>
+              <span>{proteinTarget}g goal</span>
             </div>
-
-            <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                <span className="flex items-center gap-1 text-sky-400">
-                  <Flame className="w-3.5 h-3.5" /> Deficit Status
-                </span>
-              </div>
-              <div className="text-base font-bold font-mono text-sky-300">
-                {caloriesRemaining > 200 ? "Deficit Safe" : caloriesRemaining >= 0 ? "Target Reached" : "Surplus"}
-              </div>
-              <p className="text-[10px] text-zinc-500">
-                {caloriesRemaining >= 0 ? "Steady fat-burning zone" : "Higher calorie day"}
-              </p>
+            <div className="text-xl font-bold font-mono text-white">
+              {proteinEaten}g
+            </div>
+            <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-400 rounded-full transition-all"
+                style={{ width: `${Math.min(100, (proteinEaten / proteinTarget) * 100)}%` }}
+              />
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* SECTION 2: FAST FOOD LOGGING CENTER */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
-        {/* Mode Switcher Tabs */}
-        <div className="flex items-center justify-between flex-wrap gap-2 border-b border-zinc-800 pb-4">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <h2 className="text-sm font-bold font-mono text-zinc-200">LOG WHAT YOU ATE</h2>
-          </div>
-
-          <div className="flex items-center bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs font-mono">
-            <button
-              type="button"
-              onClick={() => setLogMode("grams")}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                logMode === "grams"
-                  ? "bg-emerald-500 text-zinc-950 shadow-md"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              <Scale className="w-3.5 h-3.5" />
-              <span>Food + Grams (Optional)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setLogMode("camera")}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                logMode === "camera"
-                  ? "bg-purple-600 text-white shadow-md"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5" />
-              <span>📷 Image / Scan</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setLogMode("quick")}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                logMode === "quick"
-                  ? "bg-amber-400 text-zinc-950 shadow-md"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Free Text / Presets</span>
-            </button>
-          </div>
-        </div>
-
-        {/* TAB 1: FOOD NAME & GRAMS INPUT (OPTIONAL WEIGHT) */}
-        {logMode === "grams" && (
-          <form onSubmit={handleLogByGrams} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              {/* Food Name Input */}
-              <div className="sm:col-span-8 relative">
-                <label className="block text-xs font-mono text-zinc-400 mb-1.5">
-                  1. What did you eat? (Food Name)
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={foodName}
-                    onChange={(e) => {
-                      setFoodName(e.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    placeholder="e.g. Chicken Breast, White Rice, Eggs, Oatmeal, Apple..."
-                    className="w-full bg-zinc-950 border border-zinc-750 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 font-sans focus:outline-none transition shadow-inner"
-                  />
-                  {foodName && (
-                    <button
-                      type="button"
-                      onClick={() => setFoodName("")}
-                      className="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Suggestions Dropdown (Curated + USDA Database) */}
-                {showSuggestions && (searchSuggestions.length > 0 || filteredSuggestions.length > 0) && (
-                  <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl z-30 overflow-hidden max-h-64 overflow-y-auto">
-                    <div className="px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                      <span>Database Suggestions</span>
-                      <button
-                        type="button"
-                        onClick={() => setShowSuggestions(false)}
-                        className="text-zinc-500 hover:text-zinc-200 cursor-pointer"
-                      >
-                        ✕ Close
-                      </button>
-                    </div>
-                    {(searchSuggestions.length > 0 ? searchSuggestions : filteredSuggestions).map((item) => {
-                      const isUsdaItem = "source" in item && item.source === "usda";
-                      const subtitle =
-                        "subtitle" in item
-                          ? item.subtitle
-                          : `~${item.caloriesPerUnit} kcal / ${item.unitType}`;
-
-                      return (
-                        <button
-                          key={item.displayName}
-                          type="button"
-                          onClick={() => {
-                            setFoodName(item.displayName);
-                            setShowSuggestions(false);
-                          }}
-                          className="w-full text-left px-3.5 py-2.5 hover:bg-zinc-900 flex items-center justify-between text-xs text-zinc-300 border-b border-zinc-900 last:border-0 transition"
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="text-base">{item.emoji}</span>
-                            <span className="font-bold text-zinc-200">{item.displayName}</span>
-                            {isUsdaItem && (
-                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-400 border border-sky-800/60 font-semibold">
-                                USDA
-                              </span>
-                            )}
-                          </span>
-                          <span className="text-zinc-400 font-mono text-[11px]">
-                            {subtitle}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Grams (g) Input - OPTIONAL */}
-              <div className="sm:col-span-4">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-mono text-zinc-400">
-                    2. Weight in Grams
-                  </label>
-                  <span className="text-[10px] font-mono text-emerald-400 font-semibold bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
-                    OPTIONAL
-                  </span>
-                </div>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={grams}
-                    onChange={(e) => setGrams(e.target.value)}
-                    placeholder="e.g. 150 (optional)"
-                    className="w-full bg-zinc-950 border border-zinc-750 focus:border-emerald-400 rounded-xl px-4 py-3 text-sm text-zinc-100 font-mono focus:outline-none transition shadow-inner"
-                  />
-                  {grams ? (
-                    <button
-                      type="button"
-                      onClick={() => setGrams("")}
-                      className="absolute right-3 top-2.5 text-xs font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded-lg transition"
-                      title="Clear weight (make optional)"
-                    >
-                      Clear ✕
-                    </button>
-                  ) : (
-                    <span className="absolute right-4 top-3 text-xs font-mono text-zinc-500 pointer-events-none">
-                      grams (opt)
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Gram Pills & Popular Food Tags */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[11px] font-mono text-zinc-500 mr-1">Weight:</span>
-                <button
-                  type="button"
-                  onClick={() => setGrams("")}
-                  className={`text-[11px] font-mono px-2.5 py-1 rounded-lg border transition ${
-                    !grams.trim()
-                      ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold"
-                      : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-                  }`}
-                >
-                  Auto (No Weight)
-                </button>
-                {[50, 100, 150, 200, 250, 300].map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => setGrams(grams === g.toString() ? "" : g.toString())}
-                    className={`text-[11px] font-mono px-2.5 py-1 rounded-lg border transition ${
-                      grams === g.toString()
-                        ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold"
-                        : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
-                    }`}
-                  >
-                    {g}g
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[11px] font-mono text-zinc-500 mr-1">Staples:</span>
-                {[
-                  { name: "Chicken Breast" },
-                  { name: "White Rice" },
-                  { name: "Eggs" },
-                  { name: "Oatmeal" },
-                  { name: "Banana" },
-                ].map((s) => (
-                  <button
-                    key={s.name}
-                    type="button"
-                    onClick={() => {
-                      setFoodName(s.name);
-                      setShowSuggestions(false);
-                    }}
-                    className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 border border-zinc-750 transition"
-                  >
-                    {s.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Primary Action Buttons for Food Entry */}
-            {foodName.trim() ? (
-              <div className="space-y-3 pt-2 animate-fadeIn">
-                {/* 1. Main Action: Write Food without calorie counting (Awaiting AI Review) */}
-                <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border border-amber-400/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-amber-400/5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 shrink-0">
-                      <Sparkles className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-                        <span>{foodName.trim()}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-mono">
-                          AWAITING AI REVIEW • 0 KCAL
-                        </span>
-                      </div>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Adds this item to your list with 0 kcal. You can click &quot;Review with AI&quot; anytime to calculate calories!
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleWriteUnestimatedFood}
-                    disabled={isPending}
-                    className="px-5 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-amber-400/20 shrink-0"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>✍️ Write Food (Review with AI)</span>
-                  </button>
-                </div>
-
-                {/* 2. Optional Instant Log with Estimates */}
-                {estimatedMacros && (
-                  <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-xl">{estimatedMacros.emoji}</span>
-                      <div>
-                        <div className="text-xs font-bold text-zinc-300 flex items-center gap-2">
-                          <span>
-                            {grams.trim()
-                              ? `${grams}g ${estimatedMacros.name}`
-                              : estimatedMacros.portionDesc || estimatedMacros.name}
-                          </span>
-                          <span className="text-[10px] text-zinc-500 font-mono">OPTIONAL ESTIMATE</span>
-                        </div>
-                        <div className="text-[11px] font-mono text-zinc-400 flex items-center gap-3 mt-0.5">
-                          <span className="text-amber-400 font-bold">~{estimatedMacros.calories} kcal</span>
-                          <span className="text-emerald-400">{estimatedMacros.protein}g Protein</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isPending}
-                      className="px-3.5 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-bold text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer border border-zinc-750"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Instant Log (~{estimatedMacros.calories} kcal)</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="pt-2">
-                <button
-                  type="button"
-                  disabled={true}
-                  className="w-full py-3 rounded-xl bg-zinc-800 text-zinc-500 font-bold text-xs font-mono flex items-center justify-center gap-2 cursor-not-allowed"
-                >
-                  <span>Type what you ate to write food (e.g. &quot;Chicken with rice&quot;, &quot;2 apples&quot;, &quot;Falafel wrap&quot;)</span>
-                </button>
-              </div>
-            )}
-          </form>
-        )}
-
-        {/* TAB 2: TAKE IMAGE / CAMERA SCAN (MULTIMODAL AI) */}
-        {logMode === "camera" && (
-          <div className="space-y-4">
-            <div className="bg-zinc-950 border-2 border-dashed border-zinc-800 hover:border-purple-500/50 rounded-2xl p-6 text-center transition space-y-4">
-              <input
-                type="file"
-                id="inline-camera-input"
-                accept="image/jpeg,image/png,image/webp"
-                capture="environment"
-                onChange={handleImageFileChange}
-                className="hidden"
-              />
-
-              {!selectedImageBase64 ? (
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mx-auto">
-                    <Camera className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-zinc-200">
-                      Take a Photo or Upload Your Meal
-                    </h3>
-                    <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1">
-                      Gemini Vision scans plate items, estimates portion grams, and calculates exact calories.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-                    <label
-                      htmlFor="inline-camera-input"
-                      className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs font-mono flex items-center gap-2 transition cursor-pointer shadow-lg shadow-purple-600/20"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>📸 Snap Photo / Camera</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setIsMealScanModalOpen(true)}
-                      className="px-4 py-2.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-200 border border-zinc-750 font-bold text-xs font-mono flex items-center gap-2 transition cursor-pointer"
-                    >
-                      <Upload className="w-4 h-4" />
-                      <span>Upload Image File</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="relative max-w-xs mx-auto rounded-xl overflow-hidden border border-zinc-750 shadow-lg">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={selectedImageBase64}
-                      alt="Scanned Meal"
-                      className="w-full h-48 object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedImageBase64(null);
-                        setScannedMealResult(null);
-                      }}
-                      className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 hover:bg-black text-zinc-200 transition"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {isScanningImage && (
-                    <div className="flex items-center justify-center gap-2 text-xs font-mono text-purple-400 py-2">
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Gemini Vision is estimating portion grams & calories...</span>
-                    </div>
-                  )}
-
-                  {scannedMealResult && (
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-left space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
-                          <span>🍽️ {scannedMealResult.mealName}</span>
-                        </h4>
-                        <div className="text-right">
-                          <span className="text-sm font-bold font-mono text-amber-400">
-                            +{scannedMealResult.totalCalories} kcal
-                          </span>
-                          <span className="text-xs font-mono text-emerald-400 ml-2">
-                            +{scannedMealResult.totalProtein}g protein
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Items breakdown with grams */}
-                      <div className="space-y-1.5 border-t border-zinc-800/80 pt-2">
-                        {scannedMealResult.items.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between text-xs font-mono text-zinc-400 bg-zinc-950 px-3 py-1.5 rounded-lg"
-                          >
-                            <span>{item.name}</span>
-                            <div className="flex items-center gap-3">
-                              <span className="text-zinc-300 font-bold">{item.estimatedGrams}g</span>
-                              <span className="text-amber-400">{item.calories} kcal</span>
-                              <span className="text-emerald-400">{item.protein}g P</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleConfirmScannedMeal}
-                        disabled={isPending}
-                        className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs font-mono flex items-center justify-center gap-2 transition cursor-pointer shadow-lg shadow-purple-600/20 mt-2"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>Confirm & Log {scannedMealResult.totalCalories} kcal to Today</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: FREE TEXT / NATURAL SPEECH / PRESET BUTTONS */}
-        {logMode === "quick" && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                value={quickInput}
-                onChange={(e) => setQuickInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleWriteUnestimatedFood();
-                }}
-                placeholder='Type food name, e.g. "Homemade burger", "Chicken shawarma", "Oatmeal"...'
-                className="flex-1 bg-zinc-950 border border-zinc-750 focus:border-amber-400 rounded-xl px-4 py-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none transition font-sans shadow-inner"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleWriteUnestimatedFood}
-                  disabled={!quickInput.trim() || isPending}
-                  className="px-4 py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-zinc-800 text-zinc-950 disabled:text-zinc-500 font-bold text-xs font-mono transition cursor-pointer flex items-center gap-1.5"
-                  title="Add food without calories - ready for AI review"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>✍️ Write (AI Review)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickLog()}
-                  disabled={!quickInput.trim() || isPending}
-                  className="px-3 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 disabled:bg-zinc-900 text-zinc-300 disabled:text-zinc-600 font-bold text-xs font-mono transition cursor-pointer"
-                  title="Instant log with automatic estimates"
-                >
-                  Instant
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Tap Presets */}
-            <div className="space-y-2">
-              <span className="text-[11px] font-mono text-zinc-400">One-Tap Common Items:</span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {[
-                  { label: "🍳 4 Boiled Eggs", text: "4 boiled eggs" },
-                  { label: "🥩 200g Chicken Breast", text: "200g chicken breast" },
-                  { label: "🍚 150g White Rice", text: "150g white rice" },
-                  { label: "🥤 Whey Shake (1 scoop)", text: "1 scoop whey protein" },
-                  { label: "🍌 1 Medium Banana", text: "1 banana" },
-                  { label: "🥣 Greek Yogurt (1 cup)", text: "1 cup greek yogurt" },
-                  { label: "🌯 Chicken Shawarma", text: "150g chicken shawarma" },
-                  { label: "🥪 Tuna Sandwich", text: "1 can of tuna and 2 slices bread" },
-                ].map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => handleQuickLog(preset.text)}
-                    disabled={isPending}
-                    className="p-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 text-left text-xs text-zinc-300 flex items-center justify-between transition cursor-pointer"
-                  >
-                    <span>{preset.label}</span>
-                    <Plus className="w-3.5 h-3.5 text-zinc-500" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* SECTION 3: TODAY'S MEAL & CALORIE LOG HISTORY */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
+      {/* 2. FAST FOOD ENTRY BAR */}
+      <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-base font-bold text-zinc-100">TODAY&apos;S FOOD & MEAL LOG</span>
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">
-              {eatenItems.length} {eatenItems.length === 1 ? "entry" : "entries"}
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <h2 className="text-xs font-bold font-mono tracking-wider text-zinc-200 uppercase">
+              Log Food
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsMealScanModalOpen(true)}
+            className="text-xs font-mono text-zinc-400 hover:text-zinc-200 flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 transition cursor-pointer"
+          >
+            <Camera className="w-3.5 h-3.5 text-amber-400" />
+            <span>Photo Scan</span>
+          </button>
+        </div>
+
+        {/* Input Bar */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 relative">
+          <div className="sm:col-span-8 relative">
+            <input
+              type="text"
+              value={foodName}
+              onChange={(e) => {
+                setFoodName(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleWriteUnestimatedFood();
+                }
+              }}
+              placeholder='Type food (e.g. "Chicken breast and rice", "3 boiled eggs")...'
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none transition"
+            />
+            {foodName && (
+              <button
+                type="button"
+                onClick={() => setFoodName("")}
+                className="absolute right-3 top-2.5 text-zinc-500 hover:text-zinc-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Suggestions Dropdown */}
+            {showSuggestions && (searchSuggestions.length > 0 || filteredSuggestions.length > 0) && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-30 overflow-hidden max-h-56 overflow-y-auto">
+                <div className="px-3 py-1.5 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between text-[11px] font-mono text-zinc-500">
+                  <span>Suggestions</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSuggestions(false)}
+                    className="text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                {(searchSuggestions.length > 0 ? searchSuggestions : filteredSuggestions).map((item) => {
+                  const subtitle =
+                    "subtitle" in item
+                      ? item.subtitle
+                      : `~${item.caloriesPerUnit} kcal / ${item.unitType}`;
+
+                  return (
+                    <button
+                      key={item.displayName}
+                      type="button"
+                      onClick={() => {
+                        setFoodName(item.displayName);
+                        setShowSuggestions(false);
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-zinc-850 flex items-center justify-between text-xs text-zinc-300 border-b border-zinc-850 last:border-0 transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>{item.emoji}</span>
+                        <span className="font-semibold text-zinc-200">{item.displayName}</span>
+                      </span>
+                      <span className="text-zinc-500 font-mono text-[11px]">
+                        {subtitle}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Optional Grams */}
+          <div className="sm:col-span-4 relative">
+            <input
+              type="number"
+              min="1"
+              value={grams}
+              onChange={(e) => setGrams(e.target.value)}
+              placeholder="Grams (Optional)"
+              className="w-full bg-zinc-900 border border-zinc-800 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-sm font-mono text-zinc-100 placeholder-zinc-500 focus:outline-none transition"
+            />
+            {grams && (
+              <button
+                type="button"
+                onClick={() => setGrams("")}
+                className="absolute right-3 top-2.5 text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Primary Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleWriteUnestimatedFood}
+            disabled={!foodName.trim() || isPending}
+            className="flex-1 py-2.5 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-zinc-900 text-zinc-950 disabled:text-zinc-600 font-bold text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer"
+            title="Adds food with 0 kcal, awaiting your AI review"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>✍️ Write Food (Review with AI)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleQuickLog}
+            disabled={!foodName.trim() || isPending}
+            className="py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-850 disabled:bg-zinc-950 text-zinc-300 disabled:text-zinc-600 border border-zinc-800 font-bold text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer"
+            title="Log immediately with estimated calories"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>
+              Quick Log {estimatedMacros ? `(~${estimatedMacros.calories} kcal)` : ""}
+            </span>
+          </button>
+        </div>
+      </section>
+
+      {/* 3. TODAY'S LOGGED MEALS */}
+      <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-bold font-mono tracking-wider text-zinc-200 uppercase">
+              Today&apos;s Meals
+            </h2>
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-zinc-900 text-zinc-400 border border-zinc-800">
+              {eatenItems.length}
             </span>
           </div>
           {eatenItems.length > 0 && (
@@ -1410,407 +886,208 @@ export function CaloriesDashboard() {
           )}
         </div>
 
-        {/* Batch AI Review Banner for Unestimated Foods */}
-        {(() => {
-          const pendingCount = eatenItems.filter(
-            (i) => i.category === "food" && (i.aiStatus === "pending" || i.calories === 0)
-          ).length;
-          if (pendingCount === 0) return null;
-
-          return (
-            <div className="bg-amber-400/10 border border-amber-400/30 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-amber-400/20 flex items-center justify-center text-amber-400 shrink-0">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-amber-300 flex items-center gap-2">
-                    <span>{pendingCount} food item{pendingCount > 1 ? "s" : ""} waiting for AI review</span>
-                    <span className="text-[10px] font-mono bg-amber-950 px-2 py-0.5 rounded text-amber-400 border border-amber-800">
-                      0 kcal counted so far
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-zinc-400 mt-0.5">
-                    Ask AI to analyze your meals and calculate accurate calories &amp; macros into your daily total.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleReviewAllPending}
-                disabled={isPending || isReviewingAllPending}
-                className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md shadow-amber-400/10 shrink-0"
-              >
-                <Sparkles className={`w-3.5 h-3.5 ${isReviewingAllPending ? "animate-spin" : ""}`} />
-                <span>{isReviewingAllPending ? "AI Reviewing..." : `Review All with AI (${pendingCount})`}</span>
-              </button>
+        {/* Batch AI Review Alert */}
+        {pendingCount > 0 && (
+          <div className="bg-amber-400/10 border border-amber-400/30 rounded-xl p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Bot className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="text-xs text-amber-300 font-semibold truncate">
+                {pendingCount} item{pendingCount > 1 ? "s" : ""} awaiting AI review (0 kcal so far)
+              </span>
             </div>
-          );
-        })()}
+            <button
+              type="button"
+              onClick={handleReviewAllPending}
+              disabled={isPending || isReviewingAllPending}
+              className="px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs font-mono flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            >
+              <Sparkles className={`w-3 h-3 ${isReviewingAllPending ? "animate-spin" : ""}`} />
+              <span>{isReviewingAllPending ? "Reviewing..." : `Review All (${pendingCount})`}</span>
+            </button>
+          </div>
+        )}
 
+        {/* Items List */}
         {eatenItems.length === 0 ? (
-          <div className="py-10 text-center space-y-2 border border-dashed border-zinc-800/80 rounded-xl bg-zinc-950/40">
-            <Scale className="w-8 h-8 text-zinc-600 mx-auto" />
-            <p className="text-xs font-mono text-zinc-400">No meals logged yet today.</p>
-            <p className="text-[11px] text-zinc-600">
-              Type what you ate above and click &quot;Write Food&quot; to begin tracking today&apos;s calories.
-            </p>
+          <div className="py-8 text-center border border-dashed border-zinc-850 rounded-xl">
+            <p className="text-xs font-mono text-zinc-500">No meals logged yet today.</p>
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800/80 space-y-1">
+          <div className="divide-y divide-zinc-850 space-y-1">
             {eatenItems.map((item) => {
-              const time = item.timestamp
-                ? new Date(item.timestamp).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : "";
-
               const isFood = item.category === "food";
               const isPendingReview = isFood && (item.aiStatus === "pending" || item.calories === 0);
               const isReviewed = item.aiStatus === "reviewed";
-              const isManual = item.aiStatus === "manual";
               const isBeingReviewed = reviewingItemId === item.id;
 
               return (
                 <div
                   key={item.id}
-                  className={`py-3.5 px-3 rounded-xl transition group ${
-                    isPendingReview
-                      ? "bg-amber-950/10 border border-amber-500/20 hover:bg-amber-950/20"
-                      : "hover:bg-zinc-950/50"
-                  }`}
+                  className="py-2.5 px-2 flex items-center justify-between gap-3 rounded-lg hover:bg-zinc-900/50 transition"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-xl bg-zinc-800/80 border border-zinc-750 flex items-center justify-center text-base shrink-0 mt-0.5 sm:mt-0">
-                        {isPendingReview ? "⏳" : isReviewed ? "🤖" : item.summary?.split(" ")[0] || "🍽️"}
-                      </div>
-                      <div className="min-w-0 space-y-1">
-                        <div className="text-sm font-bold text-zinc-200 truncate flex items-center gap-2 flex-wrap">
-                          <span>{item.name}</span>
-                          {time && <span className="text-[10px] font-mono text-zinc-500 font-normal">at {time}</span>}
-
-                          {isPendingReview && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800 font-bold">
-                              ⏳ Awaiting AI Review
-                            </span>
-                          )}
-                          {isReviewed && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                              ✨ AI Reviewed
-                            </span>
-                          )}
-                          {isManual && (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-950 text-sky-400 border border-sky-800 font-bold">
-                              ✏️ Custom
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 flex-wrap">
-                          {isPendingReview ? (
-                            <span className="text-amber-400/90 font-bold">
-                              0 kcal (Click &quot;Review with AI&quot; to calculate)
-                            </span>
-                          ) : (
-                            <>
-                              <span className="text-amber-400 font-bold">+{item.calories} kcal</span>
-                              {item.protein > 0 && (
-                                <span className="text-emerald-400 font-bold">+{item.protein}g protein</span>
-                              )}
-                              {item.carbs !== undefined && item.carbs > 0 && (
-                                <span className="text-zinc-400">{item.carbs}g carbs</span>
-                              )}
-                              {item.fat !== undefined && item.fat > 0 && (
-                                <span className="text-zinc-400">{item.fat}g fat</span>
-                              )}
-                            </>
-                          )}
-                        </div>
-
-                        {item.aiNotes && (
-                          <div className="text-[11px] font-sans text-zinc-300 bg-zinc-950/70 p-2 rounded-lg border border-zinc-800/80 mt-1.5 flex items-start gap-1.5">
-                            <span className="text-amber-400 shrink-0">💡</span>
-                            <span>{item.aiNotes}</span>
-                          </div>
-                        )}
-                      </div>
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-zinc-200 truncate">
+                        {item.name}
+                      </span>
+                      {isPendingReview && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 font-semibold">
+                          Pending AI
+                        </span>
+                      )}
+                      {isReviewed && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-semibold">
+                          AI Reviewed
+                        </span>
+                      )}
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
-                      {isFood && (
+                    <div className="text-xs font-mono text-zinc-400 flex items-center gap-2">
+                      {isPendingReview ? (
+                        <span className="text-amber-400/90 font-semibold">0 kcal</span>
+                      ) : (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => handleReviewItemWithAI(item.id)}
-                            disabled={isPending || isBeingReviewed}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                              isPendingReview
-                                ? "bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 border border-amber-400/40 shadow-sm"
-                                : "bg-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-750"
-                            }`}
-                            title="Ask AI to analyze and calculate calories"
-                          >
-                            <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${isBeingReviewed ? "animate-spin" : ""}`} />
-                            <span>
-                              {isBeingReviewed
-                                ? "Reviewing..."
-                                : isPendingReview
-                                ? "Review with AI"
-                                : "AI Re-check"}
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(item)}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-sky-300 hover:bg-zinc-800 transition cursor-pointer border border-transparent hover:border-zinc-750"
-                            title="Edit calories & macros"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
+                          <span className="text-amber-400 font-bold">+{item.calories} kcal</span>
+                          {item.protein > 0 && (
+                            <span className="text-emerald-400 font-semibold">+{item.protein}g protein</span>
+                          )}
                         </>
                       )}
+                    </div>
 
+                    {item.aiNotes && (
+                      <p className="text-[11px] text-zinc-400 italic">
+                        💡 {item.aiNotes}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isPendingReview && (
                       <button
                         type="button"
-                        onClick={() => handleDeleteItem(item.id)}
-                        className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-950/30 transition shrink-0 cursor-pointer"
-                        title="Delete item"
+                        onClick={() => handleReviewItemWithAI(item.id)}
+                        disabled={isPending || isBeingReviewed}
+                        className="px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 border border-amber-400/40 text-xs font-mono font-bold flex items-center gap-1 transition cursor-pointer"
+                        title="Review with AI"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Sparkles className={`w-3 h-3 text-amber-400 ${isBeingReviewed ? "animate-spin" : ""}`} />
+                        <span>{isBeingReviewed ? "Reviewing..." : "Review"}</span>
                       </button>
-                    </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(item)}
+                      className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                      title="Edit calories"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteItem(item.id)}
+                      className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-zinc-800 transition cursor-pointer"
+                      title="Delete item"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               );
             })}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* SECTION 4: DAY-BY-DAY PROGRESS & HISTORY (SAVED PROGRESS) */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-xl space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400">
-              <History className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-zinc-100">DAY-BY-DAY PROGRESS &amp; HISTORY</h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
-                  AUTO-SAVED
-                </span>
-              </div>
-              <p className="text-xs text-zinc-400">
-                Today&apos;s intake resets on every new day. Past days are preserved here in your progress.
-              </p>
-            </div>
-          </div>
-
+      {/* 4. 14-DAY PROGRESS HISTORY (COLLAPSIBLE) */}
+      <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
+        <div
+          onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
+          className="flex items-center justify-between cursor-pointer select-none"
+        >
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSimulateNewDay}
-              disabled={isPending || isSimulatingDay}
-              className="px-3 py-1.5 rounded-xl bg-amber-400/10 hover:bg-amber-400/20 text-amber-400 border border-amber-400/30 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer"
-              title="Save today to progress and reset today's counter to 0 kcal"
-            >
-              <FastForward className="w-3.5 h-3.5" />
-              <span>Simulate / Advance Day</span>
-            </button>
+            <History className="w-4 h-4 text-amber-400" />
+            <h2 className="text-xs font-bold font-mono tracking-wider text-zinc-200 uppercase">
+              14-Day History
+            </h2>
+            <span className="text-[11px] font-mono text-zinc-500">
+              ({history.length} days recorded)
+            </span>
           </div>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-xs font-mono text-zinc-400 hover:text-zinc-200 transition"
+          >
+            <span>{isHistoryExpanded ? "Hide" : "Show"}</span>
+            {isHistoryExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
-        {/* Days List / Timeline */}
-        {history.length === 0 ? (
-          <div className="py-8 text-center text-zinc-500 font-mono text-xs">
-            No history recorded yet. Log your first meal today!
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {history.map((dayRecord) => {
-              const isExpanded = expandedDayDate === dayRecord.date;
-              const isToday = dayRecord.isToday;
-              const percent = dayRecord.calorieTarget
-                ? Math.min(100, Math.round((dayRecord.calories / dayRecord.calorieTarget) * 100))
-                : 0;
-
-              return (
-                <div
-                  key={dayRecord.date}
-                  className={`border rounded-xl transition overflow-hidden ${
-                    isToday
-                      ? "bg-zinc-950/90 border-amber-400/40 shadow-md shadow-amber-400/5"
-                      : "bg-zinc-950/60 border-zinc-800/90 hover:border-zinc-700"
-                  }`}
-                >
-                  {/* Day Summary Bar */}
+        {isHistoryExpanded && (
+          <div className="pt-2 border-t border-zinc-850 space-y-2">
+            {history.length === 0 ? (
+              <p className="text-xs font-mono text-zinc-500 py-3 text-center">
+                No past days recorded yet.
+              </p>
+            ) : (
+              history.map((dayRecord) => {
+                const isExpanded = expandedDayDate === dayRecord.date;
+                return (
                   <div
-                    onClick={() => setExpandedDayDate(isExpanded ? null : dayRecord.date)}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none"
+                    key={dayRecord.date}
+                    className="border border-zinc-850 rounded-xl overflow-hidden bg-zinc-900/40 text-xs font-mono"
                   >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-mono text-xs font-bold shrink-0 ${
-                          isToday
-                            ? "bg-amber-400/20 text-amber-300 border border-amber-400/30"
-                            : "bg-zinc-850 text-zinc-300 border border-zinc-750"
-                        }`}
-                      >
-                        <Calendar className="w-4 h-4 mb-0.5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-zinc-100 font-sans">
-                            {dayRecord.displayDate}
-                          </span>
-                          <span className="text-xs font-mono text-zinc-500">
-                            ({dayRecord.date})
-                          </span>
-                          {isToday ? (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
-                              TODAY (ACTIVE)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-850 text-zinc-400 border border-zinc-750 font-medium">
-                              SAVED PROGRESS
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 mt-1 flex-wrap">
-                          <span className="text-zinc-300 font-bold">
-                            {dayRecord.calories.toLocaleString()} kcal
-                          </span>
-                          <span className="text-zinc-600">/</span>
-                          <span className="text-zinc-400">
-                            {dayRecord.calorieTarget?.toLocaleString() || 1900} kcal target
-                          </span>
-                          <span className="text-zinc-600">•</span>
-                          <span className="text-emerald-400">
-                            {dayRecord.protein}g Protein
-                          </span>
-                          <span className="text-zinc-600">•</span>
-                          <span className="text-zinc-400">
-                            {dayRecord.itemsCount} {dayRecord.itemsCount === 1 ? "meal" : "meals"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 self-end sm:self-center">
-                      <span
-                        className={`text-xs font-mono px-2.5 py-1 rounded-lg border font-bold ${
-                          dayRecord.status === "under_budget"
-                            ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-400"
-                            : dayRecord.status === "on_track"
-                            ? "bg-sky-950/60 border-sky-800/80 text-sky-400"
-                            : "bg-rose-950/60 border-rose-800/80 text-rose-400"
-                        }`}
-                      >
-                        {dayRecord.status === "under_budget"
-                          ? "Deficit Safe"
-                          : dayRecord.status === "on_track"
-                          ? "Target Met"
-                          : "Surplus"}
-                      </span>
-
-                      <button
-                        type="button"
-                        className="p-1 text-zinc-400 hover:text-zinc-200 transition"
-                      >
-                        {isExpanded ? (
-                          <ChevronUp className="w-4 h-4" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="w-full bg-zinc-800 h-1 overflow-hidden">
                     <div
-                      className={`h-full transition-all ${
-                        percent > 100
-                          ? "bg-rose-500"
-                          : isToday
-                          ? "bg-amber-400"
-                          : "bg-emerald-500"
-                      }`}
-                      style={{ width: `${Math.min(100, percent)}%` }}
-                    />
-                  </div>
-
-                  {/* Expanded Meals Breakdown for that Day */}
-                  {isExpanded && (
-                    <div className="bg-zinc-950/90 border-t border-zinc-800/80 p-4 space-y-2 animate-fadeIn">
-                      <div className="text-xs font-mono font-bold text-zinc-400 mb-2 flex items-center justify-between">
-                        <span>Meals Eaten on {dayRecord.displayDate} ({dayRecord.date}):</span>
-                        <span>{dayRecord.itemsCount} {dayRecord.itemsCount === 1 ? "entry" : "entries"}</span>
+                      onClick={() => setExpandedDayDate(isExpanded ? null : dayRecord.date)}
+                      className="p-3 flex items-center justify-between gap-3 cursor-pointer hover:bg-zinc-900 transition"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Calendar className="w-3.5 h-3.5 text-zinc-500" />
+                        <span className="font-bold text-zinc-200">{dayRecord.displayDate}</span>
+                        <span className="text-zinc-500 text-[11px]">({dayRecord.date})</span>
                       </div>
 
-                      {dayRecord.items.length === 0 ? (
-                        <p className="text-xs font-mono text-zinc-500 italic py-2">
-                          {isToday
-                            ? "No meals logged yet today. Use the log box above to fill today's calories."
-                            : "No food items recorded for this date."}
-                        </p>
-                      ) : (
-                        <div className="divide-y divide-zinc-900 space-y-1">
-                          {dayRecord.items.map((item, idx) => {
-                            const time = item.timestamp
-                              ? new Date(item.timestamp).toLocaleTimeString([], {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })
-                              : "";
-
-                            return (
-                              <div
-                                key={item.id || idx}
-                                className="py-2 flex items-center justify-between gap-3 text-xs font-mono text-zinc-300"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <span className="text-sm shrink-0">
-                                    {item.summary?.split(" ")[0] || "🍽️"}
-                                  </span>
-                                  <span className="font-bold truncate text-zinc-200">
-                                    {item.name}
-                                  </span>
-                                  {time && (
-                                    <span className="text-[10px] text-zinc-500">
-                                      at {time}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-3 shrink-0">
-                                  <span className="text-amber-400 font-bold">
-                                    +{item.calories} kcal
-                                  </span>
-                                  {item.protein > 0 && (
-                                    <span className="text-emerald-400">
-                                      +{item.protein}g protein
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold text-zinc-200">
+                          {dayRecord.calories.toLocaleString()} kcal
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            dayRecord.status === "under_budget"
+                              ? "bg-emerald-950 text-emerald-400"
+                              : "bg-rose-950 text-rose-400"
+                          }`}
+                        >
+                          {dayRecord.status === "under_budget" ? "Deficit" : "Surplus"}
+                        </span>
+                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-zinc-400" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />}
+                      </div>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+
+                    {isExpanded && (
+                      <div className="p-3 bg-zinc-950 border-t border-zinc-850 space-y-1 text-[11px] text-zinc-400">
+                        {dayRecord.items.length === 0 ? (
+                          <p className="italic text-zinc-500">No meal details recorded.</p>
+                        ) : (
+                          dayRecord.items.map((item, idx) => (
+                            <div key={idx} className="flex justify-between py-1 border-b border-zinc-900 last:border-0">
+                              <span>{item.name}</span>
+                              <span className="text-amber-400 font-bold">+{item.calories} kcal</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
