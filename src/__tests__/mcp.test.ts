@@ -29,17 +29,16 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     await client.close();
   });
 
-  it("lists all 7 read-only resources with exact URIs", async () => {
+  it("lists all 6 read-only resources with exact URIs", async () => {
     const res = await client.listResources();
-    expect(res.resources).toHaveLength(7);
+    expect(res.resources).toHaveLength(6);
 
     const uris = res.resources.map((r) => r.uri);
     expect(uris).toContain("gym://profile");
     expect(uris).toContain("gym://session/active");
-    expect(uris).toContain("gym://mesocycle/summary");
-    expect(uris).toContain("gym://history/recent");
-    expect(uris).toContain("gym://chat/pending");
     expect(uris).toContain("gym://goals");
+    expect(uris).toContain("gym://history/recent");
+    expect(uris).toContain("gym://mesocycle/summary");
     expect(uris).toContain("gym://briefing/today");
   });
 
@@ -89,15 +88,6 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(Array.isArray(history)).toBe(true);
   });
 
-  it("reads gym://chat/pending resource correctly", async () => {
-    const res = await client.readResource({ uri: "gym://chat/pending" });
-    expect(res.contents).toHaveLength(1);
-
-    const textContent = res.contents[0] as { text: string };
-    const pending = JSON.parse(textContent.text);
-    expect(Array.isArray(pending)).toBe(true);
-  });
-
   it("reads gym://goals resource correctly", async () => {
     const res = await client.readResource({ uri: "gym://goals" });
     expect(res.contents).toHaveLength(1);
@@ -119,38 +109,24 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 27 action & state mutation tools", async () => {
+  it("lists all 13 streamlined action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(27);
+    expect(res.tools).toHaveLength(13);
 
     const toolNames = res.tools.map((t) => t.name);
-    expect(toolNames).toContain("log_workout_set");
     expect(toolNames).toContain("get_active_workout");
-    expect(toolNames).toContain("trigger_safety_abort");
-    expect(toolNames).toContain("calculate_nutrition");
-    expect(toolNames).toContain("generate_mesocycle");
-    expect(toolNames).toContain("swap_workout_order");
-    expect(toolNames).toContain("get_pending_chat_messages");
-    expect(toolNames).toContain("post_chat_reply");
-    expect(toolNames).toContain("get_daily_goals");
-    expect(toolNames).toContain("update_daily_goals");
-    expect(toolNames).toContain("get_training_plans");
-    expect(toolNames).toContain("update_training_plans");
-    expect(toolNames).toContain("get_recommended_plans");
-    expect(toolNames).toContain("log_natural_entry");
-    expect(toolNames).toContain("delete_logged_entry");
-    expect(toolNames).toContain("get_exercise_guide");
-    expect(toolNames).toContain("get_daily_morning_briefing");
-    expect(toolNames).toContain("dispatch_morning_briefing");
-    expect(toolNames).toContain("scan_meal_image");
-    expect(toolNames).toContain("review_food_entry");
-    expect(toolNames).toContain("update_logged_food_calories");
     expect(toolNames).toContain("generate_ai_workout");
     expect(toolNames).toContain("add_workout_exercise");
-    expect(toolNames).toContain("search_exercise_catalog");
     expect(toolNames).toContain("update_workout_exercise");
+    expect(toolNames).toContain("search_exercise_catalog");
+    expect(toolNames).toContain("get_exercise_guide");
+    expect(toolNames).toContain("log_workout_set");
+    expect(toolNames).toContain("get_daily_goals");
+    expect(toolNames).toContain("update_daily_goals");
     expect(toolNames).toContain("plan_daily_calories");
     expect(toolNames).toContain("update_today_calorie_usage");
+    expect(toolNames).toContain("log_natural_entry");
+    expect(toolNames).toContain("delete_logged_entry");
   });
 
   it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
@@ -185,38 +161,30 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(payload.monthlyWeightLossTargetKg).toBe(1.5);
   });
 
-  it("calls get_training_plans, update_training_plans, and get_recommended_plans tools", async () => {
-    // 1. Test get_recommended_plans
-    const recRes = await client.callTool({
-      name: "get_recommended_plans",
-      arguments: { plan_type: "both" },
-    });
-    expect(recRes.isError).toBeFalsy();
-    const recPayload = JSON.parse(((recRes as any).content[0] as { text: string }).text);
-    expect(recPayload.weekly.weeklyWorkoutsTarget).toBe(5);
-    expect(recPayload.monthly.monthlyMesocycleName).toBeDefined();
-
-    // 2. Test update_training_plans
-    const updatePlanRes = await client.callTool({
-      name: "update_training_plans",
+  it("calls plan_daily_calories and update_today_calorie_usage tools", async () => {
+    const planRes = await client.callTool({
+      name: "plan_daily_calories",
       arguments: {
-        weekly_workouts_target: 4,
-        weekly_walk_minutes_target: 160,
-        monthly_mesocycle_name: "Strength Peaking Block",
+        goal: "cut",
+        prompt: "high protein deficit",
       },
     });
-    expect(updatePlanRes.isError).toBeFalsy();
+    expect(planRes.isError).toBeFalsy();
+    const planPayload = JSON.parse(((planRes as any).content[0] as { text: string }).text);
+    expect(planPayload.success).toBe(true);
+    expect(planPayload.plan.targetCalories).toBeGreaterThan(1200);
 
-    // 3. Test get_training_plans
-    const getPlanRes = await client.callTool({
-      name: "get_training_plans",
-      arguments: {},
+    const usageRes = await client.callTool({
+      name: "update_today_calorie_usage",
+      arguments: {
+        set_total_calories: 1450,
+        reason: "Adjusted after dinner",
+      },
     });
-    expect(getPlanRes.isError).toBeFalsy();
-    const planPayload = JSON.parse(((getPlanRes as any).content[0] as { text: string }).text);
-    expect(planPayload.weeklyPlan.weeklyWorkoutsTarget).toBe(4);
-    expect(planPayload.weeklyPlan.weeklyWalkMinutesTarget).toBe(160);
-    expect(planPayload.monthlyMesocycle.monthlyMesocycleName).toBe("Strength Peaking Block");
+    expect(usageRes.isError).toBeFalsy();
+    const usagePayload = JSON.parse(((usageRes as any).content[0] as { text: string }).text);
+    expect(usagePayload.success).toBe(true);
+    expect(usagePayload.goals.todayCalories).toBe(1450);
   });
 
   it("calls log_natural_entry and delete_logged_entry tools via MCP", async () => {
@@ -245,25 +213,6 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(delPayload.success).toBe(true);
   });
 
-  it("calls calculate_nutrition tool deterministically", async () => {
-    const res = await client.callTool({
-      name: "calculate_nutrition",
-      arguments: {
-        goal: "cut",
-        activity_level: "moderately_active",
-      },
-    });
-
-    expect(res.isError).toBeFalsy();
-    expect((res as any).content).toHaveLength(1);
-
-    const payload = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(payload.nutrition).toBeDefined();
-    expect(payload.nutrition.targetCalories).toBe(payload.nutrition.tdee - 500);
-    expect(payload.nutrition.proteinGrams).toBeGreaterThan(100);
-    expect(payload.nutrition.fatGrams).toBeGreaterThan(40);
-  });
-
   it("calls get_active_workout tool", async () => {
     const res = await client.callTool({
       name: "get_active_workout",
@@ -274,6 +223,74 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     const workout = JSON.parse(((res as any).content[0] as { text: string }).text);
     expect(workout.sessionId).toBeDefined();
     expect(workout.sessionName).toBeDefined();
+  });
+
+  it("calls search_exercise_catalog tool", async () => {
+    const res = await client.callTool({
+      name: "search_exercise_catalog",
+      arguments: {
+        query: "bench press",
+        limit: 5,
+      },
+    });
+
+    expect(res.isError).toBeFalsy();
+    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(result.success).toBe(true);
+    expect(result.exercises.length).toBeGreaterThan(0);
+    expect(result.exercises[0].name.toLowerCase()).toContain("bench");
+  });
+
+  it("calls add_workout_exercise and update_workout_exercise tools", async () => {
+    const addRes = await client.callTool({
+      name: "add_workout_exercise",
+      arguments: {
+        exercise_name: "Incline Dumbbell Press",
+        target_sets: 4,
+        target_reps: 10,
+        target_load: 28,
+        load_unit: "kg",
+        rest_seconds: 90,
+        notes: "Strict 2s eccentric",
+      },
+    });
+
+    expect(addRes.isError).toBeFalsy();
+    const addResult = JSON.parse(((addRes as any).content[0] as { text: string }).text);
+    expect(addResult.success).toBe(true);
+    const addedExercise = addResult.todaysWorkout.exercises[addResult.todaysWorkout.exercises.length - 1];
+    expect(addedExercise.exerciseName).toBe("Incline Dumbbell Press");
+
+    const updateRes = await client.callTool({
+      name: "update_workout_exercise",
+      arguments: {
+        exercise_index: addResult.todaysWorkout.exercises.length - 1,
+        target_load: 30,
+        notes: "Increased weight safely",
+      },
+    });
+
+    expect(updateRes.isError).toBeFalsy();
+    const updateResult = JSON.parse(((updateRes as any).content[0] as { text: string }).text);
+    expect(updateResult.success).toBe(true);
+    const updatedExercise = updateResult.todaysWorkout.exercises[addResult.todaysWorkout.exercises.length - 1];
+    expect(updatedExercise.targetLoad).toBe(30);
+  });
+
+  it("calls generate_ai_workout tool", async () => {
+    const res = await client.callTool({
+      name: "generate_ai_workout",
+      arguments: {
+        prompt: "Push day chest and shoulders",
+        target_minutes: 45,
+      },
+    });
+
+    expect(res.isError).toBeFalsy();
+    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
+    expect(result.success).toBe(true);
+    expect(result.plan.exercises.length).toBeGreaterThan(0);
+    expect(result.todaysWorkout.exercises.length).toBeGreaterThan(0);
   });
 
   it("calls log_workout_set tool with shorthand telemetry", async () => {
@@ -295,49 +312,6 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(result.coachDirective.word_count).toBeLessThanOrEqual(30);
   });
 
-  it("calls trigger_safety_abort tool to activate Layer 0 Hard Stop", async () => {
-    const res = await client.callTool({
-      name: "trigger_safety_abort",
-      arguments: {
-        reason: "Acute shoulder impingement flag",
-      },
-    });
-
-    expect(res.isError).toBeFalsy();
-    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(result.hard_stop_active).toBe(true);
-    expect(result.arbitration_decision).toBe("HARD_STOP");
-    expect(result.resolved_load_modifier).toBe(0.0);
-  });
-
-  it("calls generate_mesocycle tool", async () => {
-    const res = await client.callTool({
-      name: "generate_mesocycle",
-      arguments: {
-        primary_goal: "hypertrophy",
-        split: "push_pull_legs",
-        days_per_week: 4,
-      },
-    });
-
-    expect(res.isError).toBeFalsy();
-    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(result.success).toBe(true);
-    expect(result.totalSessions).toBe(28);
-  });
-
-  it("calls swap_workout_order tool", async () => {
-    const res = await client.callTool({
-      name: "swap_workout_order",
-      arguments: {},
-    });
-
-    expect(res.isError).toBeFalsy();
-    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(result.success).toBe(true);
-    expect(result.nowActiveSession).toBeDefined();
-  });
-
   it("calls get_exercise_guide tool and returns movement animation and cues", async () => {
     const res = await client.callTool({
       name: "get_exercise_guide",
@@ -353,46 +327,4 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(guide.coachingCues.length).toBeGreaterThan(0);
     expect(guide.formWarnings.length).toBeGreaterThan(0);
   });
-
-  it("calls get_daily_morning_briefing tool", async () => {
-    const res = await client.callTool({
-      name: "get_daily_morning_briefing",
-      arguments: {},
-    });
-
-    expect(res.isError).toBeFalsy();
-    const briefing = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(briefing.dayOfWeek).toBeDefined();
-    expect(briefing.dailyTargets).toBeDefined();
-    expect(briefing.headline).toBeDefined();
-  });
-
-  it("calls dispatch_morning_briefing tool", async () => {
-    const res = await client.callTool({
-      name: "dispatch_morning_briefing",
-      arguments: {},
-    });
-
-    expect(res.isError).toBeFalsy();
-    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(result.message).toBeDefined();
-  });
-
-  it("calls scan_meal_image tool via MCP", async () => {
-    const fakeBase64 = Buffer.from("plate-of-food-test").toString("base64");
-    const res = await client.callTool({
-      name: "scan_meal_image",
-      arguments: {
-        image: fakeBase64,
-        mime_type: "image/jpeg",
-      },
-    });
-
-    expect(res.isError).toBeFalsy();
-    const result = JSON.parse(((res as any).content[0] as { text: string }).text);
-    expect(result.success).toBe(true);
-    expect(result.meal).toBeDefined();
-    expect(result.meal.items.length).toBeGreaterThan(0);
-  });
 });
-

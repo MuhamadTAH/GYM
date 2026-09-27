@@ -61,14 +61,17 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
     const data = await res.json();
     expect(data.name).toBe("gym-engine");
     expect(data.status).toBe("online");
-    expect(data.capabilities.tools).toHaveLength(21);
-    expect(data.capabilities.tools).toContain("get_training_plans");
-    expect(data.capabilities.tools).toContain("update_training_plans");
-    expect(data.capabilities.tools).toContain("get_recommended_plans");
+    expect(data.capabilities.tools).toHaveLength(13);
+    expect(data.capabilities.tools).toContain("get_active_workout");
+    expect(data.capabilities.tools).toContain("generate_ai_workout");
+    expect(data.capabilities.tools).toContain("add_workout_exercise");
+    expect(data.capabilities.tools).toContain("update_workout_exercise");
+    expect(data.capabilities.tools).toContain("get_daily_goals");
+    expect(data.capabilities.tools).toContain("update_daily_goals");
+    expect(data.capabilities.tools).toContain("plan_daily_calories");
+    expect(data.capabilities.tools).toContain("update_today_calorie_usage");
     expect(data.capabilities.tools).toContain("log_natural_entry");
     expect(data.capabilities.tools).toContain("delete_logged_entry");
-    expect(data.capabilities.tools).toContain("review_food_entry");
-    expect(data.capabilities.tools).toContain("update_logged_food_calories");
   });
 
   it("handles SSE GET request and emits endpoint handshake event", async () => {
@@ -146,11 +149,11 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
     const text = await res.text();
     expect(text).toContain("log_workout_set");
     expect(text).toContain("get_active_workout");
-    expect(text).toContain("calculate_nutrition");
-    expect(text).toContain("trigger_safety_abort");
+    expect(text).toContain("add_workout_exercise");
+    expect(text).toContain("plan_daily_calories");
   });
 
-  it("executes an MCP tool call over HTTP (calculate_nutrition)", async () => {
+  it("executes an MCP tool call over HTTP (get_active_workout)", async () => {
     const req = new Request("http://localhost:3000/api/mcp", {
       method: "POST",
       headers: {
@@ -163,12 +166,8 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
         id: 3,
         method: "tools/call",
         params: {
-          name: "calculate_nutrition",
-          arguments: {
-            goal: "cut",
-            weightKg: 80,
-            activityLevel: "moderate",
-          },
+          name: "get_active_workout",
+          arguments: {},
         },
       }),
     });
@@ -177,8 +176,8 @@ describe("Remote MCP StreamableHTTP / SSE Endpoint (/api/mcp)", () => {
     expect(res.status).toBe(200);
 
     const text = await res.text();
-    expect(text).toContain("proteinGrams");
-    expect(text).toContain("targetCalories");
+    expect(text).toContain("sessionId");
+    expect(text).toContain("sessionName");
   });
 
   it("closes the MCP session via DELETE", async () => {
