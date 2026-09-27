@@ -1,6 +1,7 @@
 import { parseGymShorthand, type ParsedShorthand } from "./parser";
 import { resolveArbitration, type ArbitrationResult } from "./arbitration";
 import { calculateMacroTargets, type MacroBreakdown, type NutritionGoal } from "./nutrition";
+import { generateFallbackWorkoutPlan } from "./ai-workout-generator";
 import type { TodaysWorkoutView, UserProfileView } from "@/app/actions";
 
 export interface CoachActionReceipt {
@@ -409,6 +410,56 @@ export function generateCoachResponse(
         type: "COACH_ADVICE",
         summary: `Week 1 Accumulation Phase`,
         badgeColor: "indigo",
+      },
+    };
+  }
+
+  // 9. INTENT: AI Workout Generation Request
+  if (
+    lower.includes("put a workout") ||
+    lower.includes("put workout") ||
+    lower.includes("generate workout") ||
+    lower.includes("create workout") ||
+    lower.includes("build a workout") ||
+    lower.includes("build me a workout") ||
+    lower.includes("make a workout") ||
+    lower.includes("give me a workout") ||
+    lower.includes("new workout") ||
+    (lower.includes("workout") &&
+      (lower.includes("push") ||
+        lower.includes("pull") ||
+        lower.includes("leg") ||
+        lower.includes("upper") ||
+        lower.includes("lower") ||
+        lower.includes("full body") ||
+        lower.includes("chest") ||
+        lower.includes("back") ||
+        lower.includes("arm") ||
+        lower.includes("abs")))
+  ) {
+    const plan = generateFallbackWorkoutPlan({
+      prompt: cleanMsg,
+      preferredUnit: (context.profile.preferredUnit as any) || "kg",
+    });
+
+    const exList = plan.exercises
+      .map(
+        (e, idx) =>
+          `${idx + 1}. **${e.exerciseName}** — ${e.targetSets} sets × ${e.targetReps} reps @ ${e.targetLoad}${e.loadUnit}`
+      )
+      .join("\n");
+
+    return {
+      replyText: `Here is your customized **${plan.sessionName}** (${plan.focus}):\n\n${exList}\n\n• Estimated duration: ~${plan.estimatedMinutes} mins\n• Rationale: ${plan.rationale}\n\nI can set this as your active workout right now, or you can activate it directly from the AI Workout Builder in the Workout tab!`,
+      actionReceipt: {
+        type: "WORKOUT_INFO",
+        summary: `AI Plan: ${plan.sessionName}`,
+        badgeColor: "indigo",
+        data: plan,
+      },
+      suggestedAction: {
+        type: "quick_start_workout",
+        payload: { prompt: cleanMsg },
       },
     };
   }

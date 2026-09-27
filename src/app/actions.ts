@@ -61,6 +61,18 @@ import {
   reviewFoodItemWithAI,
   type AIFoodReviewResult,
 } from "@/lib/ai-food-reviewer";
+import {
+  generateWorkoutWithAI,
+  generateFallbackWorkoutPlan,
+  type AIWorkoutPlan,
+  type AIWorkoutGeneratorOptions,
+} from "@/lib/ai-workout-generator";
+import {
+  searchExerciseCatalog,
+  findCatalogExercise,
+  mapExerciseToMovementPattern,
+  type CatalogExercise,
+} from "@/lib/exercise-catalog";
 
 export interface LoggedSetResponse {
   success: boolean;
@@ -2992,4 +3004,184 @@ export async function updateLoggedFoodCaloriesAction(input: {
     goals: updatedGoals,
   };
 }
+
+/**
+ * Server Action: Generates a tailored workout routine using Gemini AI (with catalog fallback)
+ * and immediately assigns it to the athlete's active workout session.
+ */
+export async function generateWorkoutWithAIAction(options?: {
+  prompt?: string;
+  targetMinutes?: number;
+}): Promise<{
+  success: boolean;
+  message: string;
+  plan: AIWorkoutPlan;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const user = (
+    await db.select().from(userProfiles).where(eq(userProfiles.id, sessionData.userId)).limit(1)
+  )[0];
+
+  const plan = await generateWorkoutWithAI({
+    prompt: options?.prompt,
+    preferredUnit: user?.preferredUnit || sessionData.preferredUnit || "kg",
+    targetMinutes: options?.targetMinutes || 45,
+    baselineLifts: user?.baselineLifts
+      ? {
+          squatKg: user.baselineLifts.squat_1rm,
+          benchKg: user.baselineLifts.bench_press_1rm,
+          deadliftKg: user.baselineLifts.deadlift_1rm,
+          overheadPressKg: user.baselineLifts.overhead_press_1rm,
+        }
+      : undefined,
+  });
+
+  // Update the active workout session in DB
+  await db
+    .update(workoutSessions)
+    .set({
+      sessionName: plan.sessionName,
+      sessionType: plan.sessionType,
+      sessionNotes: JSON.stringify(plan.exercises),
+      status: "in_progress",
+    })
+    .where(eq(workoutSessions.id, sessionData.sessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction();
+
+  return {
+    success: true,
+    message: `Generated "${plan.sessionName}" with ${plan.exercises.length} exercises.`,
+    plan,
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Appends an exercise from the catalog or custom entry to today's active workout.
+ */
+export async function addExerciseToWorkoutAction(payload: {
+  exerciseName: string;
+  targetSets?: number;
+  targetReps?: number;
+  targetLoad?: number;
+  loadUnit?: PreferredUnit;
+  restSeconds?: number;
+  notes?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const sessionRow = (
+    await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
+  )[0];
+
+  let exercises: PlannedExercise[] = [];
+  if (sessionRow?.sessionNotes) {
+    try {
+      exercises = JSON.parse(sessionRow.sessionNotes);
+    } catch {
+      exercises = [];
+    }
+  }
+
+  const catalogMatch = findCatalogExercise(payload.exerciseName);
+  const pattern = catalogMatch ? mapExerciseToMovementPattern(catalogMatch) : "isolation";
+  const unit: PreferredUnit = payload.loadUnit || sessionData.preferredUnit || "kg";
+
+  const newExercise: PlannedExercise = {
+    exerciseName: catalogMatch?.name || payload.exerciseName,
+    movementPattern: pattern,
+    targetLoad: payload.targetLoad !== undefined ? Math.max(0, payload.targetLoad) : (unit === "lb" ? 45 : 20),
+    loadUnit: unit,
+    targetSets: Math.max(1, payload.targetSets || 3),
+    targetReps: Math.max(1, payload.targetReps || 10),
+    targetRpe: 8.0,
+    restSeconds: Math.max(30, payload.restSeconds || 60),
+    notes: payload.notes || (catalogMatch?.instructions?.[0] ? catalogMatch.instructions[0].slice(0, 80) : undefined),
+  };
+
+  exercises.push(newExercise);
+
+  await db
+    .update(workoutSessions)
+    .set({
+      sessionNotes: JSON.stringify(exercises),
+      status: "in_progress",
+    })
+    .where(eq(workoutSessions.id, sessionData.sessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction();
+  return {
+    success: true,
+    message: `Added ${newExercise.exerciseName} to today's workout.`,
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Deletes an exercise by index from today's active workout.
+ */
+export async function deleteWorkoutExerciseAction(exerciseIndex: number): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const sessionRow = (
+    await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
+  )[0];
+
+  let exercises: PlannedExercise[] = [];
+  if (sessionRow?.sessionNotes) {
+    try {
+      exercises = JSON.parse(sessionRow.sessionNotes);
+    } catch {
+      exercises = [];
+    }
+  }
+
+  if (exerciseIndex >= 0 && exerciseIndex < exercises.length) {
+    const removed = exercises.splice(exerciseIndex, 1);
+    await db
+      .update(workoutSessions)
+      .set({
+        sessionNotes: JSON.stringify(exercises),
+      })
+      .where(eq(workoutSessions.id, sessionData.sessionId));
+
+    const todaysWorkout = await getTodaysWorkoutAction();
+    return {
+      success: true,
+      message: `Removed "${removed[0]?.exerciseName || "exercise"}" from today's workout.`,
+      todaysWorkout,
+    };
+  }
+
+  const todaysWorkout = await getTodaysWorkoutAction();
+  return {
+    success: false,
+    message: "Exercise index out of range.",
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Searches the 876-exercise catalog from GitHub
+ */
+export async function searchExerciseCatalogAction(
+  query: string,
+  options?: {
+    muscle?: string;
+    category?: string;
+    equipment?: string;
+    limit?: number;
+  }
+): Promise<CatalogExercise[]> {
+  return searchExerciseCatalog(query, options);
+}
+
 

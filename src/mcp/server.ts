@@ -34,6 +34,9 @@ import {
   reviewFoodWithAIAction,
   updateLoggedFoodCaloriesAction,
   writeUnestimatedFoodAction,
+  generateWorkoutWithAIAction,
+  addExerciseToWorkoutAction,
+  searchExerciseCatalogAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -712,6 +715,92 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["item_id", "calories"],
         },
       },
+      {
+        name: "generate_ai_workout",
+        description:
+          "Generate a personalized, science-based workout routine for the athlete using AI (or catalog engine) and immediately populate today's active session.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description:
+                "Athlete's workout request (e.g. 'Push day chest and shoulders', 'Full body 45 min', 'Leg workout with dumbbells').",
+            },
+            target_minutes: {
+              type: "number",
+              description: "Target workout duration in minutes (default: 45).",
+            },
+          },
+        },
+      },
+      {
+        name: "add_workout_exercise",
+        description:
+          "Add an exercise from the 876-exercise catalog or custom name directly to today's active workout routine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            exercise_name: {
+              type: "string",
+              description: "Name of the exercise to add.",
+            },
+            target_sets: {
+              type: "number",
+              description: "Number of target working sets (default: 3).",
+            },
+            target_reps: {
+              type: "number",
+              description: "Target repetitions per set (default: 10).",
+            },
+            target_load: {
+              type: "number",
+              description: "Target load in kg or lb.",
+            },
+            load_unit: {
+              type: "string",
+              enum: ["kg", "lb"],
+              description: "Unit of target load.",
+            },
+            rest_seconds: {
+              type: "number",
+              description: "Rest duration in seconds between sets (default: 60).",
+            },
+            notes: {
+              type: "string",
+              description: "Optional coaching or form execution cues.",
+            },
+          },
+          required: ["exercise_name"],
+        },
+      },
+      {
+        name: "search_exercise_catalog",
+        description:
+          "Search the comprehensive 876-exercise catalog from GitHub by name, muscle, category, or equipment.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Search keyword (e.g. 'bench', 'curl', 'squat').",
+            },
+            muscle: {
+              type: "string",
+              description: "Optional muscle filter (e.g. 'chest', 'quadriceps', 'biceps', 'abdominals').",
+            },
+            equipment: {
+              type: "string",
+              description: "Optional equipment filter (e.g. 'dumbbell', 'barbell', 'body only', 'cable').",
+            },
+            limit: {
+              type: "number",
+              description: "Max number of exercises to return (default: 20).",
+            },
+          },
+          required: ["query"],
+        },
+      },
     ],
   };
 });
@@ -1215,6 +1304,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const protein = args?.protein !== undefined ? Number(args.protein) : undefined;
         const notes = args?.notes !== undefined ? String(args.notes) : undefined;
         const result = await updateLoggedFoodCaloriesAction({ itemId, calories, protein, notes });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "generate_ai_workout": {
+        const prompt = args?.prompt !== undefined ? String(args.prompt) : undefined;
+        const targetMinutes = args?.target_minutes !== undefined ? Number(args.target_minutes) : undefined;
+        const result = await generateWorkoutWithAIAction({ prompt, targetMinutes });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "add_workout_exercise": {
+        const exerciseName = String(args?.exercise_name || "").trim();
+        if (!exerciseName) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_name'.");
+        }
+        const targetSets = args?.target_sets !== undefined ? Number(args.target_sets) : undefined;
+        const targetReps = args?.target_reps !== undefined ? Number(args.target_reps) : undefined;
+        const targetLoad = args?.target_load !== undefined ? Number(args.target_load) : undefined;
+        const loadUnit = args?.load_unit === "lb" ? "lb" : "kg";
+        const restSeconds = args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
+        const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+
+        const result = await addExerciseToWorkoutAction({
+          exerciseName,
+          targetSets,
+          targetReps,
+          targetLoad,
+          loadUnit,
+          restSeconds,
+          notes,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "search_exercise_catalog": {
+        const query = String(args?.query || "").trim();
+        const muscle = args?.muscle !== undefined ? String(args.muscle) : undefined;
+        const equipment = args?.equipment !== undefined ? String(args.equipment) : undefined;
+        const limit = args?.limit !== undefined ? Number(args.limit) : 20;
+
+        const result = await searchExerciseCatalogAction(query, { muscle, equipment, limit });
         return {
           content: [
             {

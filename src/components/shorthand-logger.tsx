@@ -30,6 +30,9 @@ import {
   FastForward,
   Minus,
   Plus,
+  Trash2,
+  Loader2,
+  Wand2,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
@@ -41,6 +44,10 @@ import {
   skipRestDayAction,
   quickStartWorkoutAction,
   getDailyGoalsAction,
+  generateWorkoutWithAIAction,
+  addExerciseToWorkoutAction,
+  deleteWorkoutExerciseAction,
+  searchExerciseCatalogAction,
   type LoggedSetResponse,
   type TodaysWorkoutView,
   type AutoregulationAdjustment,
@@ -49,6 +56,7 @@ import {
 import type { ArbitrationResult } from "@/lib/arbitration";
 import type { ExecutionDirective } from "@/lib/coach";
 import type { PlannedExercise } from "@/lib/planner";
+import type { CatalogExercise } from "@/lib/exercise-catalog";
 import { AudioCuePlayer, useAudioCue } from "./audio-cue";
 import { ProfileModal } from "./profile-modal";
 import { ExerciseGuideModal } from "./exercise-guide-modal";
@@ -108,6 +116,18 @@ export function ShorthandLogger() {
     message: string;
     adjustments: AutoregulationAdjustment[];
   } | null>(null);
+
+  // AI Workout Builder State
+  const [isAiBuilderOpen, setIsAiBuilderOpen] = useState(false);
+  const [aiWorkoutPrompt, setAiWorkoutPrompt] = useState("");
+  const [isGeneratingAiWorkout, setIsGeneratingAiWorkout] = useState(false);
+
+  // Exercise Catalog Modal State
+  const [isAddExerciseOpen, setIsAddExerciseOpen] = useState(false);
+  const [catalogSearchQuery, setCatalogSearchQuery] = useState("");
+  const [selectedMuscleFilter, setSelectedMuscleFilter] = useState("all");
+  const [catalogResults, setCatalogResults] = useState<CatalogExercise[]>([]);
+  const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
 
   const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
 
@@ -314,6 +334,90 @@ export function ShorthandLogger() {
     });
   };
 
+  // Generate workout using AI / catalog fallback
+  const handleGenerateAiWorkout = (promptOverride?: string) => {
+    const promptToUse = promptOverride || aiWorkoutPrompt;
+    setIsGeneratingAiWorkout(true);
+    setStatusMessage("✨ AI Coach is designing your personalized routine...");
+
+    startTransition(async () => {
+      try {
+        const res = await generateWorkoutWithAIAction({ prompt: promptToUse });
+        if (res.success) {
+          setStatusMessage(`✨ Generated: ${res.plan.sessionName}`);
+          setTodaysWorkout(res.todaysWorkout);
+          setActiveExIndex(0);
+          setIsAiBuilderOpen(false);
+          setAiWorkoutPrompt("");
+          refreshWorkout();
+        } else {
+          setStatusMessage("Could not generate routine. Please try again.");
+        }
+      } catch (err) {
+        setStatusMessage("Error generating workout routine.");
+      } finally {
+        setIsGeneratingAiWorkout(false);
+        setTimeout(() => setStatusMessage(""), 4000);
+      }
+    });
+  };
+
+  // Delete exercise from today's routine
+  const handleDeleteExercise = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    startTransition(async () => {
+      const res = await deleteWorkoutExerciseAction(idx);
+      if (res.success) {
+        setStatusMessage(res.message);
+        setTodaysWorkout(res.todaysWorkout);
+        if (activeExIndex >= res.todaysWorkout.exercises.length) {
+          setActiveExIndex(Math.max(0, res.todaysWorkout.exercises.length - 1));
+        }
+        refreshWorkout();
+        setTimeout(() => setStatusMessage(""), 3000);
+      }
+    });
+  };
+
+  // Search 876-exercise catalog from GitHub
+  const handleSearchCatalog = (query: string, muscle?: string) => {
+    setCatalogSearchQuery(query);
+    const m = (muscle !== undefined ? muscle : selectedMuscleFilter) === "all" ? undefined : (muscle || selectedMuscleFilter);
+    setIsSearchingCatalog(true);
+    searchExerciseCatalogAction(query, { muscle: m, limit: 30 }).then((results) => {
+      setCatalogResults(results);
+      setIsSearchingCatalog(false);
+    });
+  };
+
+  // Add exercise from catalog into today's workout
+  const handleAddExerciseFromCatalog = (exName: string) => {
+    startTransition(async () => {
+      const res = await addExerciseToWorkoutAction({
+        exerciseName: exName,
+        loadUnit: preferredUnit,
+      });
+      if (res.success) {
+        setStatusMessage(res.message);
+        setTodaysWorkout(res.todaysWorkout);
+        setIsAddExerciseOpen(false);
+        refreshWorkout();
+        setTimeout(() => setStatusMessage(""), 3000);
+      }
+    });
+  };
+
+  // Initial load of catalog when modal opens
+  useEffect(() => {
+    if (isAddExerciseOpen && catalogResults.length === 0) {
+      setIsSearchingCatalog(true);
+      searchExerciseCatalogAction("", { limit: 30 }).then((res) => {
+        setCatalogResults(res);
+        setIsSearchingCatalog(false);
+      });
+    }
+  }, [isAddExerciseOpen]);
+
   // Active guide for player
   const currentPlannedEx =
     todaysWorkout?.exercises?.[activeExIndex] || todaysWorkout?.exercises?.[0];
@@ -513,14 +617,121 @@ export function ShorthandLogger() {
               })}
             </div>
 
-            {/* Routine Summary */}
+            {/* AI Workout Builder Section */}
+            <div className="rounded-3xl p-4 bg-gradient-to-br from-indigo-950/40 via-purple-950/20 to-zinc-900 border border-indigo-500/30 shadow-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                    <Sparkles className="w-4 h-4 fill-indigo-400/20" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      AI Workout Builder
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+                        876 Catalog
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-zinc-400">
+                      Let AI program your workout or tap a split
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAiBuilderOpen(!isAiBuilderOpen)}
+                  className="text-xs font-bold text-indigo-300 hover:text-white px-3 py-1.5 rounded-xl bg-indigo-900/60 border border-indigo-700/60 hover:bg-indigo-800/80 transition cursor-pointer flex items-center gap-1"
+                >
+                  <Wand2 className="w-3 h-3 text-indigo-400" />
+                  <span>{isAiBuilderOpen ? "Close" : "✨ Program"}</span>
+                </button>
+              </div>
+
+              {/* Quick 1-Tap Preset Chips */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+                {[
+                  { label: "🔥 Push", prompt: "Push day chest, shoulders and triceps" },
+                  { label: "⚡ Pull", prompt: "Pull day lats, upper back and biceps" },
+                  { label: "🦵 Legs", prompt: "Heavy quad and hamstring leg workout" },
+                  { label: "🌟 Full Body", prompt: "Full body athletic hypertrophy 45m" },
+                  { label: "💪 Arms & Delts", prompt: "Arm and shoulder hypertrophy focus" },
+                  { label: "🎯 Core & Abs", prompt: "Core stability, obliques and abs burner" },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    disabled={isGeneratingAiWorkout}
+                    onClick={() => handleGenerateAiWorkout(preset.prompt)}
+                    className="shrink-0 px-2.5 py-1 rounded-xl bg-zinc-900/90 hover:bg-indigo-900/50 border border-zinc-800 hover:border-indigo-500/50 text-zinc-300 hover:text-white transition disabled:opacity-50 cursor-pointer text-[11px] font-medium"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Expanded Custom AI Prompt Form */}
+              {isAiBuilderOpen && (
+                <div className="pt-2 space-y-2.5 border-t border-zinc-800/80 animate-in fade-in duration-150">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={aiWorkoutPrompt}
+                      onChange={(e) => setAiWorkoutPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isGeneratingAiWorkout) {
+                          handleGenerateAiWorkout();
+                        }
+                      }}
+                      placeholder="e.g. 40 min dumbbell chest and arms, or squat & core focus..."
+                      className="w-full bg-zinc-900 border border-zinc-700/80 focus:border-indigo-500 rounded-2xl px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none transition shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      Uses 876-exercise catalog &amp; periodization
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isGeneratingAiWorkout}
+                      onClick={() => handleGenerateAiWorkout()}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/30 transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isGeneratingAiWorkout ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Generating...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Generate Routine</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Routine Summary with Add Exercise Action */}
             <div className="flex items-center justify-between text-xs font-mono text-zinc-400 pt-1">
-              <span className="font-bold text-zinc-200">
-                {todaysWorkout?.exercises.length || 0} Exercises, ~45 Mins
-              </span>
-              <span className="text-zinc-500">
-                Week {todaysWorkout?.weekNumber || 1} • Overload
-              </span>
+              <div>
+                <span className="font-bold text-zinc-200">
+                  {todaysWorkout?.exercises.length || 0} Exercises, ~45 Mins
+                </span>
+                <span className="text-zinc-500 ml-2">
+                  Week {todaysWorkout?.weekNumber || 1} • Overload
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddExerciseOpen(true)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-950/60 border border-indigo-800/60 hover:bg-indigo-900/60 transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add Exercise</span>
+              </button>
             </div>
 
             {/* Exercises List Cards */}
@@ -534,25 +745,43 @@ export function ShorthandLogger() {
                 <button
                   type="button"
                   onClick={handleSkipRest}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
                 >
                   Skip Rest &amp; Start Workout
                 </button>
               </div>
             ) : exercisesList.length === 0 ? (
-              <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800 text-center space-y-3">
+              <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800 text-center space-y-4">
                 <Dumbbell className="w-8 h-8 text-zinc-600 mx-auto" />
                 <h3 className="text-sm font-bold text-white">No Planned Exercises for Today</h3>
-                <p className="text-xs text-zinc-400">
-                  Ready to jump into progressive overload training?
+                <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                  Choose a split, have the AI program your session, or browse 876 exercises.
                 </p>
-                <button
-                  type="button"
-                  onClick={handleQuickStart}
-                  className="px-4 py-2.5 rounded-xl bg-[#5850ec] hover:bg-indigo-500 text-white font-bold text-xs"
-                >
-                  ⚡ Start Training (Skip Setup)
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateAiWorkout("Full body workout")}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-indigo-600/20"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>✨ AI Generate Full Body</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddExerciseOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Browse 876 Exercises</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleQuickStart}
+                    className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 font-medium text-xs cursor-pointer"
+                  >
+                    ⚡ Quick Start (Skip Setup)
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -599,7 +828,17 @@ export function ShorthandLogger() {
                         </div>
                       </div>
 
-                      <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteExercise(idx, e)}
+                          title="Remove exercise"
+                          className="p-2 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-950/40 transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
+                      </div>
                     </div>
                   );
                 })}
@@ -1057,6 +1296,137 @@ export function ShorthandLogger() {
             >
               Continue to Dashboard
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Exercise Catalog Modal (876 Exercises from GitHub) */}
+      {isAddExerciseOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
+                  <Dumbbell className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Exercise Catalog</h3>
+                  <p className="text-[11px] text-zinc-400 font-mono">876 Exercises from GitHub</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddExerciseOpen(false)}
+                className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search & Muscle Group Filters */}
+            <div className="p-4 space-y-3 border-b border-zinc-800/60 bg-zinc-900/40">
+              <div className="relative">
+                <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  value={catalogSearchQuery}
+                  onChange={(e) => handleSearchCatalog(e.target.value)}
+                  placeholder="Search 876 exercises by name, muscle, equipment..."
+                  className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none transition shadow-inner"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px]">
+                {[
+                  { id: "all", label: "All" },
+                  { id: "chest", label: "Chest" },
+                  { id: "middle back", label: "Back" },
+                  { id: "quadriceps", label: "Quads" },
+                  { id: "hamstrings", label: "Hamstrings" },
+                  { id: "biceps", label: "Biceps" },
+                  { id: "triceps", label: "Triceps" },
+                  { id: "shoulders", label: "Shoulders" },
+                  { id: "abdominals", label: "Abs & Core" },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedMuscleFilter(m.id);
+                      handleSearchCatalog(catalogSearchQuery, m.id);
+                    }}
+                    className={`shrink-0 px-2.5 py-1 rounded-lg font-mono transition cursor-pointer ${
+                      selectedMuscleFilter === m.id
+                        ? "bg-indigo-600 text-white font-bold"
+                        : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Catalog Results List */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-2">
+              {isSearchingCatalog ? (
+                <div className="py-12 text-center text-zinc-500 flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                  <span className="text-xs font-mono">Searching catalog...</span>
+                </div>
+              ) : catalogResults.length === 0 ? (
+                <div className="py-12 text-center text-zinc-500 space-y-2">
+                  <p className="text-xs">No exercises found matching your search.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogSearchQuery("");
+                      setSelectedMuscleFilter("all");
+                      handleSearchCatalog("", "all");
+                    }}
+                    className="text-xs text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    Reset filters
+                  </button>
+                </div>
+              ) : (
+                catalogResults.map((ex) => (
+                  <div
+                    key={ex.id}
+                    className="p-3 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 hover:border-zinc-700 flex items-center justify-between gap-3 transition"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs font-bold text-white capitalize truncate">{ex.name}</h4>
+                      <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-400 mt-0.5">
+                        {ex.primaryMuscles?.[0] && (
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 capitalize">
+                            {ex.primaryMuscles[0]}
+                          </span>
+                        )}
+                        {ex.equipment && (
+                          <span className="px-1.5 py-0.5 rounded bg-zinc-800/60 text-zinc-400 capitalize">
+                            {ex.equipment}
+                          </span>
+                        )}
+                        {ex.level && (
+                          <span className="text-zinc-500 capitalize">{ex.level}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAddExerciseFromCatalog(ex.name)}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 shrink-0 transition cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add</span>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}

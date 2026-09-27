@@ -119,9 +119,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 21 action & state mutation tools", async () => {
+  it("lists all 24 action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(21);
+    expect(res.tools).toHaveLength(24);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("log_workout_set");
@@ -145,6 +145,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("scan_meal_image");
     expect(toolNames).toContain("review_food_entry");
     expect(toolNames).toContain("update_logged_food_calories");
+    expect(toolNames).toContain("generate_ai_workout");
+    expect(toolNames).toContain("add_workout_exercise");
+    expect(toolNames).toContain("search_exercise_catalog");
   });
 
   it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
