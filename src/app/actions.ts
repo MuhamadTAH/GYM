@@ -40,6 +40,7 @@ import {
   calculateMacroTargets,
   type NutritionGoal,
   type MacroBreakdown,
+  type ActivityLevel,
 } from "@/lib/nutrition";
 import type { BaselineLifts, ActiveInjury, PreferredUnit } from "@/schemas/fitness";
 import {
@@ -62,6 +63,11 @@ import {
   type AIFoodReviewResult,
 } from "@/lib/ai-food-reviewer";
 import {
+  planDailyCaloriesWithAI,
+  generateFallbackCaloriePlan,
+  type AICaloriePlan,
+} from "@/lib/ai-calorie-planner";
+import {
   generateWorkoutWithAI,
   generateFallbackWorkoutPlan,
   type AIWorkoutPlan,
@@ -71,6 +77,7 @@ import {
   searchExerciseCatalog,
   findCatalogExercise,
   mapExerciseToMovementPattern,
+  resolveExerciseName,
   type CatalogExercise,
 } from "@/lib/exercise-catalog";
 
@@ -3088,20 +3095,19 @@ export async function addExerciseToWorkoutAction(payload: {
     }
   }
 
-  const catalogMatch = findCatalogExercise(payload.exerciseName);
-  const pattern = catalogMatch ? mapExerciseToMovementPattern(catalogMatch) : "isolation";
+  const resolved = resolveExerciseName(payload.exerciseName);
   const unit: PreferredUnit = payload.loadUnit || sessionData.preferredUnit || "kg";
 
   const newExercise: PlannedExercise = {
-    exerciseName: catalogMatch?.name || payload.exerciseName,
-    movementPattern: pattern,
+    exerciseName: resolved.standardizedName,
+    movementPattern: resolved.movementPattern,
     targetLoad: payload.targetLoad !== undefined ? Math.max(0, payload.targetLoad) : (unit === "lb" ? 45 : 20),
     loadUnit: unit,
     targetSets: Math.max(1, payload.targetSets || 3),
     targetReps: Math.max(1, payload.targetReps || 10),
     targetRpe: 8.0,
     restSeconds: Math.max(30, payload.restSeconds || 60),
-    notes: payload.notes || (catalogMatch?.instructions?.[0] ? catalogMatch.instructions[0].slice(0, 80) : undefined),
+    notes: payload.notes || (resolved.catalogExercise?.instructions?.[0] ? resolved.catalogExercise.instructions[0].slice(0, 80) : undefined),
   };
 
   exercises.push(newExercise);
@@ -3117,7 +3123,93 @@ export async function addExerciseToWorkoutAction(payload: {
   const todaysWorkout = await getTodaysWorkoutAction();
   return {
     success: true,
-    message: `Added ${newExercise.exerciseName} to today's workout.`,
+    message: resolved.fromCatalog
+      ? `Added "${resolved.standardizedName}" from exercise package to today's workout.`
+      : `Added custom exercise "${resolved.standardizedName}" to today's workout.`,
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Updates an existing exercise in today's active workout routine.
+ * Resolves exercise name against the 876-exercise catalog; if not found, preserves the custom name.
+ */
+export async function updateWorkoutExerciseAction(payload: {
+  exerciseIndex: number;
+  exerciseName?: string;
+  targetSets?: number;
+  targetReps?: number;
+  targetLoad?: number;
+  loadUnit?: PreferredUnit;
+  restSeconds?: number;
+  notes?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const sessionRow = (
+    await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
+  )[0];
+
+  let exercises: PlannedExercise[] = [];
+  if (sessionRow?.sessionNotes) {
+    try {
+      exercises = JSON.parse(sessionRow.sessionNotes);
+    } catch {
+      exercises = [];
+    }
+  }
+
+  if (payload.exerciseIndex < 0 || payload.exerciseIndex >= exercises.length) {
+    const todaysWorkout = await getTodaysWorkoutAction();
+    return {
+      success: false,
+      message: "Exercise index out of range.",
+      todaysWorkout,
+    };
+  }
+
+  const existing = exercises[payload.exerciseIndex];
+  let finalName = existing.exerciseName;
+  let finalPattern = existing.movementPattern;
+  let fromCatalog = false;
+
+  if (payload.exerciseName && payload.exerciseName.trim()) {
+    const resolved = resolveExerciseName(payload.exerciseName);
+    finalName = resolved.standardizedName;
+    finalPattern = resolved.movementPattern;
+    fromCatalog = resolved.fromCatalog;
+  }
+
+  const updatedExercise: PlannedExercise = {
+    ...existing,
+    exerciseName: finalName,
+    movementPattern: finalPattern,
+    targetSets: payload.targetSets !== undefined ? Math.max(1, payload.targetSets) : existing.targetSets,
+    targetReps: payload.targetReps !== undefined ? Math.max(1, payload.targetReps) : existing.targetReps,
+    targetLoad: payload.targetLoad !== undefined ? Math.max(0, payload.targetLoad) : existing.targetLoad,
+    loadUnit: payload.loadUnit || existing.loadUnit,
+    restSeconds: payload.restSeconds !== undefined ? Math.max(15, payload.restSeconds) : existing.restSeconds,
+    notes: payload.notes !== undefined ? payload.notes : existing.notes,
+  };
+
+  exercises[payload.exerciseIndex] = updatedExercise;
+
+  await db
+    .update(workoutSessions)
+    .set({
+      sessionNotes: JSON.stringify(exercises),
+    })
+    .where(eq(workoutSessions.id, sessionData.sessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction();
+  return {
+    success: true,
+    message: fromCatalog
+      ? `Updated exercise #${payload.exerciseIndex + 1} to catalog exercise "${finalName}".`
+      : `Updated exercise #${payload.exerciseIndex + 1} to "${finalName}".`,
     todaysWorkout,
   };
 }
@@ -3183,5 +3275,264 @@ export async function searchExerciseCatalogAction(
 ): Promise<CatalogExercise[]> {
   return searchExerciseCatalog(query, options);
 }
+
+export type AICaloriePlanResult = AICaloriePlan;
+
+/**
+ * Server Action: Calculates optimal daily calories & macros using AI (or sports science engine)
+ * and immediately updates the athlete's daily calorie targets.
+ */
+export async function planDailyCaloriesWithAIAction(options?: {
+  goal?: NutritionGoal;
+  prompt?: string;
+  activityLevel?: ActivityLevel;
+  calorieTargetOverride?: number;
+  clientLocalDate?: string;
+  weightKg?: number;
+  heightCm?: number;
+  age?: number;
+  ageYears?: number;
+  gender?: "male" | "female";
+  sex?: "male" | "female" | "other";
+  dietaryPreferences?: string;
+  saveToDailyGoals?: boolean;
+}): Promise<{
+  success: boolean;
+  message: string;
+  plan: AICaloriePlan;
+  goals: DailyGoalsData | null;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const user = (
+    await db.select().from(userProfiles).where(eq(userProfiles.id, userId)).limit(1)
+  )[0];
+
+  const profileWeightKg =
+    user?.preferredUnit === "lb"
+      ? Math.round((user.currentWeightValue || 75) * 0.453592 * 10) / 10
+      : user?.currentWeightValue || 75;
+
+  const weightKg =
+    options?.weightKg && options.weightKg > 0
+      ? options.weightKg
+      : profileWeightKg > 0
+      ? profileWeightKg
+      : 75;
+  const heightCm =
+    options?.heightCm && options.heightCm > 0
+      ? options.heightCm
+      : user?.heightCm || 175;
+  const ageYears =
+    options?.ageYears && options.ageYears > 0
+      ? options.ageYears
+      : options?.age && options.age > 0
+      ? options.age
+      : user?.age || 26;
+  const sex = options?.sex || options?.gender || user?.sex || "male";
+
+  const effectivePrompt = [
+    options?.prompt,
+    options?.dietaryPreferences
+      ? `Dietary preferences: ${options.dietaryPreferences}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(". ");
+
+  const plan = await planDailyCaloriesWithAI({
+    weightKg,
+    heightCm,
+    ageYears,
+    sex,
+    activityLevel: options?.activityLevel || "moderately_active",
+    goal: options?.goal || "cut",
+    prompt: effectivePrompt || undefined,
+    calorieTargetOverride: options?.calorieTargetOverride,
+  });
+
+  const now = new Date().toISOString();
+  const todayDate = options?.clientLocalDate || now.slice(0, 10);
+
+  if (options?.saveToDailyGoals !== false) {
+    // Update athleteDailyGoals
+    const existingGoals = await db
+      .select()
+      .from(athleteDailyGoals)
+      .where(eq(athleteDailyGoals.userId, userId))
+      .limit(1);
+
+    if (existingGoals.length > 0) {
+      await db
+        .update(athleteDailyGoals)
+        .set({
+          caloriesTarget: plan.targetCalories,
+          proteinMinGrams: plan.proteinGrams,
+          caloriesNotes: `AI Plan (${plan.goal.toUpperCase()}): ${plan.explanation}`,
+          updatedAt: now,
+        })
+        .where(eq(athleteDailyGoals.id, existingGoals[0].id));
+    } else {
+      await db.insert(athleteDailyGoals).values({
+        id: crypto.randomUUID(),
+        userId,
+        caloriesTarget: plan.targetCalories,
+        proteinMinGrams: plan.proteinGrams,
+        caloriesNotes: `AI Plan (${plan.goal.toUpperCase()}): ${plan.explanation}`,
+        todayCalories: 0,
+        todayProtein: 0,
+        todayWaterLiters: 0,
+        todayWalkMinutes: 0,
+        todayLoggedItems: [],
+        lastActiveDate: todayDate,
+        updatedAt: now,
+      });
+    }
+  }
+
+  const updatedGoals = await getDailyGoalsAction(todayDate);
+  return {
+    success: true,
+    message: `Planned daily targets: ${plan.targetCalories} kcal, ${plan.proteinGrams}g protein (${plan.goal.toUpperCase()}).`,
+    plan,
+    goals: updatedGoals,
+  };
+}
+
+/**
+ * Server Action: Directly adjusts or sets today's consumed calories & logs receipt for AI tracking.
+ */
+export async function updateTodayCalorieUsageAction(input: {
+  caloriesDelta?: number;
+  setTotalCalories?: number;
+  consumedCalories?: number;
+  proteinGrams?: number;
+  carbsGrams?: number;
+  fatGrams?: number;
+  reason?: string;
+  notes?: string;
+  clientLocalDate?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  goals: DailyGoalsData | null;
+}> {
+  const sessionData = await getOrCreateActiveSession();
+  const userId = sessionData.userId;
+  const now = new Date().toISOString();
+  const todayDate = input.clientLocalDate || now.slice(0, 10);
+
+  // Ensure active row exists for today
+  await getDailyGoalsAction(todayDate);
+
+  const activeRows = await db
+    .select()
+    .from(athleteDailyGoals)
+    .where(eq(athleteDailyGoals.userId, userId))
+    .limit(1);
+
+  if (activeRows.length === 0) {
+    return {
+      success: false,
+      message: "No daily goals record found.",
+      goals: null,
+    };
+  }
+
+  const activeRow = activeRows[0];
+  const itemsList: LoggedItem[] = (activeRow.todayLoggedItems as LoggedItem[]) || [];
+
+  const targetTotal =
+    input.setTotalCalories !== undefined
+      ? input.setTotalCalories
+      : input.consumedCalories;
+  const noteReason = input.reason || input.notes || "Calorie Usage Update";
+
+  let newCalories = activeRow.todayCalories || 0;
+  let logSummary = "";
+
+  if (targetTotal !== undefined) {
+    newCalories = Math.max(0, Math.round(targetTotal));
+    logSummary = `✏️ AI Calorie Set: ${newCalories} kcal (${noteReason})`;
+  } else if (input.caloriesDelta !== undefined) {
+    newCalories = Math.max(
+      0,
+      Math.round((activeRow.todayCalories || 0) + input.caloriesDelta)
+    );
+    const sign = input.caloriesDelta >= 0 ? "+" : "";
+    logSummary = `✏️ AI Calorie Adjustment: ${sign}${input.caloriesDelta} kcal (${noteReason})`;
+  } else {
+    return {
+      success: false,
+      message:
+        "Specify either caloriesDelta, setTotalCalories, or consumedCalories.",
+      goals: await getDailyGoalsAction(todayDate),
+    };
+  }
+
+  const newProtein =
+    input.proteinGrams !== undefined
+      ? input.proteinGrams
+      : activeRow.todayProtein || 0;
+
+  const adjustmentItem: LoggedItem = {
+    id: crypto.randomUUID(),
+    timestamp: now,
+    rawText: noteReason,
+    name: noteReason,
+    category: "food",
+    calories:
+      input.caloriesDelta !== undefined
+        ? input.caloriesDelta
+        : newCalories - (activeRow.todayCalories || 0),
+    protein: input.proteinGrams || 0,
+    carbs: input.carbsGrams,
+    fat: input.fatGrams,
+    waterLiters: 0,
+    walkMinutes: 0,
+    trainingCompleted: false,
+    aiStatus: "manual",
+    aiNotes: noteReason,
+    summary: logSummary,
+  };
+
+  const updatedItems = [adjustmentItem, ...itemsList];
+
+  await db
+    .update(athleteDailyGoals)
+    .set({
+      todayCalories: newCalories,
+      todayProtein: newProtein,
+      todayLoggedItems: updatedItems,
+      lastActiveDate: todayDate,
+      updatedAt: now,
+    })
+    .where(eq(athleteDailyGoals.id, activeRow.id));
+
+  await syncDailyNutritionLog(
+    userId,
+    todayDate,
+    {
+      calories: newCalories,
+      protein: newProtein,
+      waterLiters: activeRow.todayWaterLiters || 0,
+      walkMinutes: activeRow.todayWalkMinutes || 0,
+      trainingCompleted: Boolean(activeRow.todayTrainingCompleted),
+    },
+    updatedItems,
+    {
+      calorieTarget: activeRow.caloriesTarget,
+      proteinTarget: activeRow.proteinMinGrams,
+    }
+  );
+
+  const updatedGoals = await getDailyGoalsAction(todayDate);
+  return {
+    success: true,
+    message: `Updated today's calories to ${newCalories} kcal.`,
+    goals: updatedGoals,
+  };
+}
+
 
 

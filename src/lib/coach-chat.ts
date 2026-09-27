@@ -2,6 +2,8 @@ import { parseGymShorthand, type ParsedShorthand } from "./parser";
 import { resolveArbitration, type ArbitrationResult } from "./arbitration";
 import { calculateMacroTargets, type MacroBreakdown, type NutritionGoal } from "./nutrition";
 import { generateFallbackWorkoutPlan } from "./ai-workout-generator";
+import { resolveExerciseName } from "./exercise-catalog";
+import { generateFallbackCaloriePlan } from "./ai-calorie-planner";
 import type { TodaysWorkoutView, UserProfileView } from "@/app/actions";
 
 export interface CoachActionReceipt {
@@ -15,7 +17,7 @@ export interface CoachChatResponse {
   replyText: string;
   actionReceipt?: CoachActionReceipt;
   suggestedAction?: {
-    type: "log_set" | "safety_abort" | "swap_session" | "recalculate_mesocycle" | "quick_start_workout";
+    type: "log_set" | "safety_abort" | "swap_session" | "recalculate_mesocycle" | "quick_start_workout" | "apply_calorie_plan" | "update_exercise" | "update_calories";
     payload?: any;
   };
 }
@@ -350,26 +352,81 @@ export function generateCoachResponse(
         ? Math.round(p.currentWeightValue * 0.453592 * 10) / 10
         : p.currentWeightValue;
 
-    const macros = calculateMacroTargets({
-      weightKg,
-      heightCm: p.heightCm,
-      ageYears: p.age,
-      sex: p.sex,
-      activityLevel: "moderately_active",
-      goal,
-    });
-
-    if (macros) {
+    // Check if user specifically requested to set/update calorie intake
+    const calMatch = cleanMsg.match(/\b(\d{3,4})\s*(?:kcal|calories|cal)?\b/i);
+    if ((lower.includes("update") || lower.includes("set") || lower.includes("change") || lower.includes("make it")) && calMatch) {
+      const val = Number(calMatch[1]);
       return {
-        replyText: `Daily Nutrition Plan for ${goal.toUpperCase()} (${p.name}):\n\n• Target Energy: ${macros.targetCalories} kcal (BMR: ${macros.bmr}, TDEE: ${macros.tdee} kcal)\n• Protein: ${macros.proteinGrams}g (${macros.proteinPct}%)\n• Carbohydrates: ${macros.carbGrams}g (${macros.carbPct}%)\n• Fats: ${macros.fatGrams}g (${macros.fatPct}%)\n\nMaintain high protein intake spaced evenly across 4 meals to preserve lean contractile mass during progression.`,
+        replyText: `Got it, ${p.name}! I can update your daily calorie target to **${val} kcal**. Tap below to confirm and apply this to your daily goals.`,
         actionReceipt: {
           type: "NUTRITION_INFO",
-          summary: `${goal.toUpperCase()}: ${macros.targetCalories} kcal • ${macros.proteinGrams}g P`,
+          summary: `Set Calories: ${val} kcal`,
           badgeColor: "amber",
-          data: macros,
+          data: { calories: val },
+        },
+        suggestedAction: {
+          type: "update_calories",
+          payload: { setTotalCalories: val },
         },
       };
     }
+
+    const plan = generateFallbackCaloriePlan({
+      weightKg: weightKg > 0 ? weightKg : 75,
+      heightCm: p.heightCm > 0 ? p.heightCm : 175,
+      ageYears: p.age > 0 ? p.age : 26,
+      sex: p.sex || "male",
+      goal,
+    });
+
+    const mealList = plan.mealSplitSuggestions
+      .map((m) => `• ${m.meal}: ~${m.calories} kcal (${m.proteinGrams}g P) — ${m.description}`)
+      .join("\n");
+
+    return {
+      replyText: `Daily Nutrition Plan for ${goal.toUpperCase()} (${p.name}):\n\n• Target Energy: **${plan.targetCalories} kcal** (BMR: ${plan.bmr}, TDEE: ${plan.tdee} kcal)\n• Protein: **${plan.proteinGrams}g** (High-retention)\n• Carbs: **${plan.carbGrams}g** • Fats: **${plan.fatGrams}g**\n\nSuggested Meal Distribution:\n${mealList}\n\n${plan.explanation}`,
+      actionReceipt: {
+        type: "NUTRITION_INFO",
+        summary: `${goal.toUpperCase()}: ${plan.targetCalories} kcal • ${plan.proteinGrams}g P`,
+        badgeColor: "amber",
+        data: plan,
+      },
+      suggestedAction: {
+        type: "apply_calorie_plan",
+        payload: {
+          targetCalories: plan.targetCalories,
+          proteinGrams: plan.proteinGrams,
+          goal: plan.goal,
+        },
+      },
+    };
+  }
+
+  // 4b. INTENT: Update, Swap, or Edit an Exercise in Training
+  if (
+    lower.includes("update exercise") ||
+    lower.includes("change exercise") ||
+    lower.includes("swap exercise") ||
+    lower.includes("replace exercise") ||
+    lower.includes("edit exercise")
+  ) {
+    const rawTarget = cleanMsg.replace(/.*(?:to|with|into)\s+/i, "").trim();
+    const resolved = resolveExerciseName(rawTarget || "Bench Press");
+    return {
+      replyText: resolved.fromCatalog
+        ? `Found **"${resolved.standardizedName}"** in your 876-exercise catalog! I can update your workout routine with this exercise now.`
+        : `Ready to update your routine with custom exercise **"${resolved.standardizedName}"**!`,
+      actionReceipt: {
+        type: "WORKOUT_INFO",
+        summary: `Update Exercise: ${resolved.standardizedName}`,
+        badgeColor: "indigo",
+        data: { exerciseName: resolved.standardizedName, fromCatalog: resolved.fromCatalog },
+      },
+      suggestedAction: {
+        type: "update_exercise",
+        payload: { exerciseName: resolved.standardizedName },
+      },
+    };
   }
 
 

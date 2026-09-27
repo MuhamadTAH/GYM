@@ -146,3 +146,62 @@ export function mapExerciseToMovementPattern(ex: CatalogExercise): MovementPatte
   // Default isolation for arms, calves, neck, forearms, etc.
   return "isolation";
 }
+
+export interface ResolvedExerciseName {
+  standardizedName: string;
+  fromCatalog: boolean;
+  catalogExercise?: CatalogExercise;
+  movementPattern: MovementPattern;
+}
+
+/**
+ * Resolves an exercise name against the 876-exercise GitHub catalog.
+ * If found, returns the official standardized name from the package and inferred movement pattern.
+ * If not found, preserves the user's custom name as-is with fallback isolation movement pattern.
+ */
+export function resolveExerciseName(inputName: string): ResolvedExerciseName {
+  const clean = inputName.trim();
+  if (!clean) {
+    return {
+      standardizedName: "Custom Exercise",
+      fromCatalog: false,
+      movementPattern: "isolation",
+    };
+  }
+
+  // 1. Direct or fuzzy lookup in catalog
+  const match = findCatalogExercise(clean);
+  if (match) {
+    return {
+      standardizedName: match.name,
+      fromCatalog: true,
+      catalogExercise: match,
+      movementPattern: mapExerciseToMovementPattern(match),
+    };
+  }
+
+  // 2. Search catalog by tokens
+  const searchResults = searchExerciseCatalog(clean, { limit: 1 });
+  if (searchResults.length > 0) {
+    const topMatch = searchResults[0];
+    if (
+      topMatch.name.toLowerCase().includes(clean.toLowerCase()) ||
+      clean.toLowerCase().includes(topMatch.name.toLowerCase())
+    ) {
+      return {
+        standardizedName: topMatch.name,
+        fromCatalog: true,
+        catalogExercise: topMatch,
+        movementPattern: mapExerciseToMovementPattern(topMatch),
+      };
+    }
+  }
+
+  // 3. Fallback: If we do not have an exercise in the package, write the name only
+  return {
+    standardizedName: clean,
+    fromCatalog: false,
+    movementPattern: "isolation",
+  };
+}
+

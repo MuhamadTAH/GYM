@@ -22,6 +22,7 @@ import {
   Calendar,
   History,
   FastForward,
+  Loader2,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -37,11 +38,15 @@ import {
   reviewFoodWithAIAction,
   reviewAllPendingFoodsWithAIAction,
   updateLoggedFoodCaloriesAction,
+  planDailyCaloriesWithAIAction,
+  updateTodayCalorieUsageAction,
   type DailyGoalsData,
   type SaveDailyGoalsInput,
   type FoodSearchResultItem,
   type DailyNutritionLogRecord,
+  type AICaloriePlanResult,
 } from "@/app/actions";
+import { type ActivityLevel } from "@/lib/nutrition";
 import { FOOD_DATABASE, type EstimatedMacroResult } from "@/lib/food-parser";
 import type { LoggedItem } from "@/db/schema";
 import { MealScanModal } from "./meal-scan-modal";
@@ -78,6 +83,26 @@ export function CaloriesDashboard() {
   const [editProteinInput, setEditProteinInput] = useState("");
   const [editNotesInput, setEditNotesInput] = useState("");
 
+  // AI Calorie Planner State
+  const [isCaloriePlannerOpen, setIsCaloriePlannerOpen] = useState(false);
+  const [planWeightKg, setPlanWeightKg] = useState<number>(75);
+  const [planHeightCm, setPlanHeightCm] = useState<number>(175);
+  const [planAge, setPlanAge] = useState<number>(25);
+  const [planGender, setPlanGender] = useState<"male" | "female">("male");
+  const [planGoal, setPlanGoal] = useState<"cut" | "maintain" | "bulk">("maintain");
+  const [planActivityLevel, setPlanActivityLevel] = useState<ActivityLevel>("moderately_active");
+  const [planDietaryPreferences, setPlanDietaryPreferences] = useState("");
+  const [isPlanningCalories, setIsPlanningCalories] = useState(false);
+  const [caloriePlanResult, setCaloriePlanResult] = useState<AICaloriePlanResult | null>(null);
+
+  // Calorie Usage Adjuster State
+  const [isAdjustCalorieModalOpen, setIsAdjustCalorieModalOpen] = useState(false);
+  const [adjustCaloriesInput, setAdjustCaloriesInput] = useState("");
+  const [adjustProteinInput, setAdjustProteinInput] = useState("");
+  const [adjustCarbsInput, setAdjustCarbsInput] = useState("");
+  const [adjustFatInput, setAdjustFatInput] = useState("");
+  const [adjustNotesInput, setAdjustNotesInput] = useState("");
+
   const getClientLocalDate = () => {
     const d = new Date();
     const y = d.getFullYear();
@@ -87,6 +112,25 @@ export function CaloriesDashboard() {
   };
 
   const refreshData = () => {
+    // Offline hydration if goals is not loaded yet
+    if (!goals && typeof window !== "undefined") {
+      try {
+        const cachedGoals = localStorage.getItem("gym_cached_goals");
+        const cachedHistory = localStorage.getItem("gym_cached_history");
+        if (cachedGoals) {
+          const parsed = JSON.parse(cachedGoals);
+          setGoals(parsed);
+          setTargetCaloriesInput(parsed.caloriesTarget?.toString() || "1900");
+          setTargetProteinInput(parsed.proteinMinGrams?.toString() || "65");
+        }
+        if (cachedHistory) {
+          setHistory(JSON.parse(cachedHistory));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     startTransition(async () => {
       try {
         const localDate = getClientLocalDate();
@@ -99,6 +143,12 @@ export function CaloriesDashboard() {
         if (data) {
           setTargetCaloriesInput(data.caloriesTarget?.toString() || "1900");
           setTargetProteinInput(data.proteinMinGrams?.toString() || "65");
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("gym_cached_goals", JSON.stringify(data));
+              localStorage.setItem("gym_cached_history", JSON.stringify(hist));
+            } catch {}
+          }
         }
       } catch (err) {
         console.error("Failed to load calorie goals:", err);
@@ -407,6 +457,104 @@ export function CaloriesDashboard() {
     });
   };
 
+  // 11. AI Calorie Planning
+  const handleGenerateCaloriePlan = async () => {
+    setIsPlanningCalories(true);
+    try {
+      const res = await planDailyCaloriesWithAIAction({
+        weightKg: Number(planWeightKg) || 75,
+        heightCm: Number(planHeightCm) || 175,
+        age: Number(planAge) || 25,
+        gender: planGender,
+        goal: planGoal,
+        activityLevel: planActivityLevel,
+        dietaryPreferences: planDietaryPreferences.trim() || undefined,
+        saveToDailyGoals: false,
+      });
+
+      if (res.success && res.plan) {
+        setCaloriePlanResult(res.plan);
+      } else {
+        showFeedback(res.message || "Failed to generate plan", "error");
+      }
+    } catch (err: unknown) {
+      showFeedback(err instanceof Error ? err.message : "Error planning calories", "error");
+    } finally {
+      setIsPlanningCalories(false);
+    }
+  };
+
+  const handleApplyCaloriePlan = async () => {
+    if (!caloriePlanResult) return;
+    startTransition(async () => {
+      try {
+        const payload: SaveDailyGoalsInput = {
+          caloriesTarget: caloriePlanResult.targetCalories,
+          proteinMinGrams: caloriePlanResult.proteinGrams,
+        };
+        const res = await saveDailyGoalsAction(payload);
+        if (res.goals) {
+          setGoals(res.goals);
+          setTargetCaloriesInput(String(res.goals.caloriesTarget));
+          setTargetProteinInput(String(res.goals.proteinMinGrams));
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("gym_cached_goals", JSON.stringify(res.goals));
+            } catch {}
+          }
+        }
+        setIsCaloriePlannerOpen(false);
+        showFeedback(`Targets updated: ${caloriePlanResult.targetCalories} kcal, ${caloriePlanResult.proteinGrams}g protein`);
+      } catch {
+        showFeedback("Failed to apply calorie plan", "error");
+      }
+    });
+  };
+
+  // 12. Adjust Calorie & Macro Usage
+  const handleSaveCalorieUsage = async () => {
+    const calVal = parseFloat(adjustCaloriesInput);
+    if (isNaN(calVal) || calVal < 0) {
+      showFeedback("Please enter a valid calorie amount", "error");
+      return;
+    }
+    const proVal = adjustProteinInput.trim() ? parseFloat(adjustProteinInput) : undefined;
+    const carbsVal = adjustCarbsInput.trim() ? parseFloat(adjustCarbsInput) : undefined;
+    const fatVal = adjustFatInput.trim() ? parseFloat(adjustFatInput) : undefined;
+
+    startTransition(async () => {
+      try {
+        const localDate = getClientLocalDate();
+        const res = await updateTodayCalorieUsageAction({
+          consumedCalories: calVal,
+          proteinGrams: proVal,
+          carbsGrams: carbsVal,
+          fatGrams: fatVal,
+          notes: adjustNotesInput.trim() || undefined,
+          clientLocalDate: localDate,
+        });
+
+        if (res.success && res.goals) {
+          setGoals(res.goals);
+          setIsAdjustCalorieModalOpen(false);
+          const hist = await getDailyProgressHistoryAction(14, localDate);
+          setHistory(hist);
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("gym_cached_goals", JSON.stringify(res.goals));
+              localStorage.setItem("gym_cached_history", JSON.stringify(hist));
+            } catch {}
+          }
+          showFeedback(res.message);
+        } else {
+          showFeedback(res.message || "Failed to update calorie usage", "error");
+        }
+      } catch (err: unknown) {
+        showFeedback(err instanceof Error ? err.message : "Failed to update calorie usage", "error");
+      }
+    });
+  };
+
   // Calculated metrics
   const caloriesEaten = Math.round(goals?.todayCalories || 0);
   const caloriesTarget = goals?.caloriesTarget || 1900;
@@ -594,6 +742,335 @@ export function CaloriesDashboard() {
         </div>
       )}
 
+      {/* AI Calorie & Macro Planner Modal */}
+      {isCaloriePlannerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden my-auto animate-in fade-in zoom-in-95">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">AI Calorie &amp; Macro Planner</h3>
+                  <p className="text-[11px] font-mono text-zinc-400">Sports science &amp; Gemini calculations</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCaloriePlannerOpen(false)}
+                className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Inputs */}
+            <div className="p-4 sm:p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">Weight (kg)</label>
+                  <input
+                    type="number"
+                    min={30}
+                    max={250}
+                    value={planWeightKg}
+                    onChange={(e) => setPlanWeightKg(Number(e.target.value) || 75)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">Height (cm)</label>
+                  <input
+                    type="number"
+                    min={100}
+                    max={250}
+                    value={planHeightCm}
+                    onChange={(e) => setPlanHeightCm(Number(e.target.value) || 175)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">Age</label>
+                  <input
+                    type="number"
+                    min={14}
+                    max={100}
+                    value={planAge}
+                    onChange={(e) => setPlanAge(Number(e.target.value) || 25)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">Gender</label>
+                  <select
+                    value={planGender}
+                    onChange={(e) => setPlanGender(e.target.value as "male" | "female")}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 block mb-1">Goal</label>
+                  <select
+                    value={planGoal}
+                    onChange={(e) => setPlanGoal(e.target.value as "cut" | "maintain" | "bulk")}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="cut">Cut (Fat Loss / Deficit)</option>
+                    <option value="maintain">Maintain (Energy Balance)</option>
+                    <option value="bulk">Bulk (Muscle Gain / Surplus)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-mono text-zinc-400 block mb-1">Activity Level</label>
+                <select
+                  value={planActivityLevel}
+                  onChange={(e) => setPlanActivityLevel(e.target.value as ActivityLevel)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                >
+                  <option value="sedentary">Sedentary (desk job, little exercise)</option>
+                  <option value="lightly_active">Lightly Active (1-3 workouts/week)</option>
+                  <option value="moderately_active">Moderately Active (3-5 workouts/week)</option>
+                  <option value="very_active">Very Active (6-7 hard workouts/week)</option>
+                  <option value="extra_active">Extra Active / Athlete (2x training/day)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-mono text-zinc-400 block mb-1">Preferences or Dietary Notes</label>
+                <input
+                  type="text"
+                  value={planDietaryPreferences}
+                  onChange={(e) => setPlanDietaryPreferences(e.target.value)}
+                  placeholder="e.g. High protein, intermittent fasting, vegetarian..."
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="button"
+                disabled={isPlanningCalories}
+                onClick={handleGenerateCaloriePlan}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-lg shadow-indigo-600/30"
+              >
+                {isPlanningCalories ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Calculating Targets with AI...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Calculate Plan</span>
+                  </>
+                )}
+              </button>
+
+              {/* Plan Results Display */}
+              {caloriePlanResult && (
+                <div className="p-3.5 rounded-2xl bg-zinc-900 border border-indigo-500/30 space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400 block font-semibold">
+                        Planned Target
+                      </span>
+                      <span className="text-2xl font-black font-mono text-white">
+                        {caloriePlanResult.targetCalories} kcal
+                      </span>
+                    </div>
+                    <div className="text-right text-[11px] font-mono text-zinc-400">
+                      <div>BMR: {caloriePlanResult.bmr} kcal</div>
+                      <div>TDEE: {caloriePlanResult.tdee} kcal</div>
+                    </div>
+                  </div>
+
+                  {/* Macros Grid */}
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                    <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800">
+                      <div className="text-emerald-400 font-bold">{caloriePlanResult.proteinGrams}g</div>
+                      <div className="text-[10px] text-zinc-500">Protein</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800">
+                      <div className="text-amber-400 font-bold">{caloriePlanResult.carbGrams}g</div>
+                      <div className="text-[10px] text-zinc-500">Carbs</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-zinc-950 border border-zinc-800">
+                      <div className="text-blue-400 font-bold">{caloriePlanResult.fatGrams}g</div>
+                      <div className="text-[10px] text-zinc-500">Fats</div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    {caloriePlanResult.explanation}
+                  </p>
+
+                  {/* Meal Breakdown Preview */}
+                  {caloriePlanResult.mealSplitSuggestions && caloriePlanResult.mealSplitSuggestions.length > 0 && (
+                    <div className="pt-2 border-t border-zinc-800/80 space-y-1.5">
+                      <span className="text-[10px] font-mono text-zinc-400 block uppercase">
+                        Recommended Meal Distribution:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] font-mono text-zinc-300">
+                        {caloriePlanResult.mealSplitSuggestions.map((m, idx) => (
+                          <div key={idx} className="p-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 space-y-0.5">
+                            <div className="flex items-center justify-between text-white font-bold">
+                              <span>{m.meal}</span>
+                              <span className="text-amber-400">{m.calories} kcal</span>
+                            </div>
+                            <div className="text-[10px] text-emerald-400 font-mono">
+                              {m.proteinGrams}g Protein
+                            </div>
+                            {m.description && (
+                              <p className="text-[10px] text-zinc-400 leading-tight">
+                                {m.description}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleApplyCaloriePlan}
+                    disabled={isPending}
+                    className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-md"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Apply This Plan to Daily Goals</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust Today's Calorie Usage Modal */}
+      {isAdjustCalorieModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-bold text-zinc-100">Update Calorie Usage</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAdjustCalorieModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Today's Consumed Calories (kcal)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={adjustCaloriesInput}
+                  onChange={(e) => setAdjustCaloriesInput(e.target.value)}
+                  placeholder="e.g. 1650"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Protein (grams, optional)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={adjustProteinInput}
+                  onChange={(e) => setAdjustProteinInput(e.target.value)}
+                  placeholder="e.g. 140"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-base font-bold font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-mono text-zinc-400 mb-1">
+                    Carbs (g)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={adjustCarbsInput}
+                    onChange={(e) => setAdjustCarbsInput(e.target.value)}
+                    placeholder="e.g. 180"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-zinc-400 mb-1">
+                    Fats (g)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={adjustFatInput}
+                    onChange={(e) => setAdjustFatInput(e.target.value)}
+                    placeholder="e.g. 50"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-mono text-zinc-100 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-zinc-400 mb-1">
+                  Update Reason / Notes
+                </label>
+                <input
+                  type="text"
+                  value={adjustNotesInput}
+                  onChange={(e) => setAdjustNotesInput(e.target.value)}
+                  placeholder="e.g. AI adjustment / restaurant dinner"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustCalorieModalOpen(false)}
+                  className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-xs transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCalorieUsage}
+                  disabled={isPending}
+                  className="flex-1 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs transition cursor-pointer"
+                >
+                  Update Usage
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Status Notification */}
       {statusMessage && (
         <div
@@ -644,6 +1121,31 @@ export function CaloriesDashboard() {
             >
               <Sliders className="w-3 h-3 text-amber-400" />
               <span>Target: {caloriesTarget}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCaloriePlannerOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 text-xs font-mono flex items-center gap-1 transition cursor-pointer shadow-sm"
+              title="AI Calorie & Macro Target Planner"
+            >
+              <Sparkles className="w-3 h-3 text-indigo-400" />
+              <span>AI Planner</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAdjustCaloriesInput(String(caloriesEaten));
+                setAdjustProteinInput(String(proteinEaten));
+                setAdjustCarbsInput("");
+                setAdjustFatInput("");
+                setAdjustNotesInput("");
+                setIsAdjustCalorieModalOpen(true);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 text-xs font-mono flex items-center gap-1 transition cursor-pointer"
+              title="Adjust today's calories & macros directly"
+            >
+              <Edit2 className="w-3 h-3 text-amber-400" />
+              <span>Adjust Used</span>
             </button>
             <button
               type="button"

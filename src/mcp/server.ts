@@ -36,7 +36,10 @@ import {
   writeUnestimatedFoodAction,
   generateWorkoutWithAIAction,
   addExerciseToWorkoutAction,
+  updateWorkoutExerciseAction,
   searchExerciseCatalogAction,
+  planDailyCaloriesWithAIAction,
+  updateTodayCalorieUsageAction,
 } from "@/app/actions";
 import { calculateMacroTargets, type ActivityLevel, type NutritionGoal } from "@/lib/nutrition";
 import type { PlannerGoal, SplitType } from "@/lib/planner";
@@ -801,6 +804,95 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["query"],
         },
       },
+      {
+        name: "update_workout_exercise",
+        description:
+          "Update an existing exercise in today's active workout routine. Checks the 876-exercise catalog for standardized naming, or preserves the custom name if not in catalog.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            exercise_index: {
+              type: "number",
+              description: "The 0-based index of the exercise in today's workout.",
+            },
+            exercise_name: {
+              type: "string",
+              description: "New exercise name (checked against catalog).",
+            },
+            target_sets: {
+              type: "number",
+              description: "Target sets.",
+            },
+            target_reps: {
+              type: "number",
+              description: "Target reps.",
+            },
+            target_load: {
+              type: "number",
+              description: "Target load in kg or lb.",
+            },
+            load_unit: {
+              type: "string",
+              enum: ["kg", "lb"],
+              description: "Unit of target load.",
+            },
+            rest_seconds: {
+              type: "number",
+              description: "Rest interval in seconds.",
+            },
+            notes: {
+              type: "string",
+              description: "Coaching notes or execution cues.",
+            },
+          },
+          required: ["exercise_index"],
+        },
+      },
+      {
+        name: "plan_daily_calories",
+        description:
+          "Plan the athlete's daily calorie and macronutrient targets using AI and sports science formulas (TDEE, BMR, deficit/surplus), and update their daily goals.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: {
+              type: "string",
+              enum: ["cut", "bulk", "maintain"],
+              description: "Nutrition goal (cut = deficit, bulk = surplus, maintain = balance).",
+            },
+            prompt: {
+              type: "string",
+              description: "Optional custom guidance or requests (e.g. 'high protein cut 500 deficit').",
+            },
+            calorie_target_override: {
+              type: "number",
+              description: "Optional explicit calorie target to set.",
+            },
+          },
+        },
+      },
+      {
+        name: "update_today_calorie_usage",
+        description:
+          "Directly adjust or set the athlete's logged calorie intake for today.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            calories_delta: {
+              type: "number",
+              description: "Calorie adjustment to add or subtract (e.g. +250 or -150).",
+            },
+            set_total_calories: {
+              type: "number",
+              description: "Exact total calories to set today's intake to.",
+            },
+            reason: {
+              type: "string",
+              description: "Explanation or note for this calorie adjustment.",
+            },
+          },
+        },
+      },
     ],
   };
 });
@@ -1367,6 +1459,82 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const limit = args?.limit !== undefined ? Number(args.limit) : 20;
 
         const result = await searchExerciseCatalogAction(query, { muscle, equipment, limit });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "update_workout_exercise": {
+        if (args?.exercise_index === undefined) {
+          throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+        }
+        const exerciseIndex = Number(args.exercise_index);
+        const exerciseName = args?.exercise_name !== undefined ? String(args.exercise_name) : undefined;
+        const targetSets = args?.target_sets !== undefined ? Number(args.target_sets) : undefined;
+        const targetReps = args?.target_reps !== undefined ? Number(args.target_reps) : undefined;
+        const targetLoad = args?.target_load !== undefined ? Number(args.target_load) : undefined;
+        const loadUnit = args?.load_unit === "lb" ? "lb" : args?.load_unit === "kg" ? "kg" : undefined;
+        const restSeconds = args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
+        const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+
+        const result = await updateWorkoutExerciseAction({
+          exerciseIndex,
+          exerciseName,
+          targetSets,
+          targetReps,
+          targetLoad,
+          loadUnit,
+          restSeconds,
+          notes,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "plan_daily_calories": {
+        const goal = args?.goal === "bulk" || args?.goal === "cut" || args?.goal === "maintain" ? args.goal : undefined;
+        const prompt = args?.prompt !== undefined ? String(args.prompt) : undefined;
+        const calorieTargetOverride = args?.calorie_target_override !== undefined ? Number(args.calorie_target_override) : undefined;
+
+        const result = await planDailyCaloriesWithAIAction({
+          goal,
+          prompt,
+          calorieTargetOverride,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "update_today_calorie_usage": {
+        const caloriesDelta = args?.calories_delta !== undefined ? Number(args.calories_delta) : undefined;
+        const setTotalCalories = args?.set_total_calories !== undefined ? Number(args.set_total_calories) : undefined;
+        const reason = args?.reason !== undefined ? String(args.reason) : undefined;
+
+        const result = await updateTodayCalorieUsageAction({
+          caloriesDelta,
+          setTotalCalories,
+          reason,
+        });
+
         return {
           content: [
             {

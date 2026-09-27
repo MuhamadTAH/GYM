@@ -33,6 +33,7 @@ import {
   Trash2,
   Loader2,
   Wand2,
+  Edit2,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
@@ -46,6 +47,7 @@ import {
   getDailyGoalsAction,
   generateWorkoutWithAIAction,
   addExerciseToWorkoutAction,
+  updateWorkoutExerciseAction,
   deleteWorkoutExerciseAction,
   searchExerciseCatalogAction,
   type LoggedSetResponse,
@@ -129,34 +131,82 @@ export function ShorthandLogger() {
   const [catalogResults, setCatalogResults] = useState<CatalogExercise[]>([]);
   const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
 
+  // Edit Exercise State
+  const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
+  const [editExerciseName, setEditExerciseName] = useState("");
+  const [editExerciseSets, setEditExerciseSets] = useState(3);
+  const [editExerciseReps, setEditExerciseReps] = useState(10);
+  const [editExerciseLoad, setEditExerciseLoad] = useState(20);
+  const [editExerciseRest, setEditExerciseRest] = useState(60);
+  const [editExerciseNotes, setEditExerciseNotes] = useState("");
+
   const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
 
-  // Load today's workout & metrics
+  // Load today's workout & metrics (with offline phone caching)
   const refreshWorkout = () => {
-    getTodaysWorkoutAction().then((tw) => {
-      if (tw) {
-        setTodaysWorkout(tw);
-        if (tw.dayIndex) setActiveDay(tw.dayIndex);
-        if (tw.exercises.length > 0) {
-          const firstEx = tw.exercises[activeExIndex] || tw.exercises[0];
-          setCurrentLoad(firstEx.targetLoad);
-          setCurrentReps(firstEx.targetReps);
-          setCurrentRpe(firstEx.targetRpe || 8);
-          setPreferredUnit(firstEx.loadUnit);
+    getTodaysWorkoutAction()
+      .then((tw) => {
+        if (tw) {
+          setTodaysWorkout(tw);
+          try {
+            localStorage.setItem("gym_cached_workout", JSON.stringify(tw));
+          } catch {}
+          if (tw.dayIndex) setActiveDay(tw.dayIndex);
+          if (tw.exercises.length > 0) {
+            const firstEx = tw.exercises[activeExIndex] || tw.exercises[0];
+            setCurrentLoad(firstEx.targetLoad);
+            setCurrentReps(firstEx.targetReps);
+            setCurrentRpe(firstEx.targetRpe || 8);
+            setPreferredUnit(firstEx.loadUnit);
+          }
         }
-      }
-    });
-    getDailyGoalsAction().then((g) => {
-      if (g) setGoals(g);
-    });
-    fetchRecentSetsAction().then((sets) => {
-      if (sets && sets.length > 0) {
-        setRecentSets(sets as unknown as RecentSetDisplay[]);
-      }
-    });
+      })
+      .catch(() => {
+        // Fallback to local storage when phone has no internet
+        try {
+          const cached = localStorage.getItem("gym_cached_workout");
+          if (cached) {
+            const tw = JSON.parse(cached);
+            setTodaysWorkout(tw);
+            if (tw.dayIndex) setActiveDay(tw.dayIndex);
+          }
+        } catch {}
+      });
+
+    getDailyGoalsAction()
+      .then((g) => {
+        if (g) {
+          setGoals(g);
+          try {
+            localStorage.setItem("gym_cached_goals", JSON.stringify(g));
+          } catch {}
+        }
+      })
+      .catch(() => {
+        try {
+          const cached = localStorage.getItem("gym_cached_goals");
+          if (cached) setGoals(JSON.parse(cached));
+        } catch {}
+      });
+
+    fetchRecentSetsAction()
+      .then((sets) => {
+        if (sets && sets.length > 0) {
+          setRecentSets(sets as unknown as RecentSetDisplay[]);
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
+    // Instant offline hydration from local cache
+    try {
+      const cachedW = localStorage.getItem("gym_cached_workout");
+      if (cachedW) setTodaysWorkout(JSON.parse(cachedW));
+      const cachedG = localStorage.getItem("gym_cached_goals");
+      if (cachedG) setGoals(JSON.parse(cachedG));
+    } catch {}
+
     refreshWorkout();
   }, []);
 
@@ -375,6 +425,47 @@ export function ShorthandLogger() {
         }
         refreshWorkout();
         setTimeout(() => setStatusMessage(""), 3000);
+      }
+    });
+  };
+
+  // Open edit exercise modal
+  const handleOpenEditExercise = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!todaysWorkout || !todaysWorkout.exercises[idx]) return;
+    const ex = todaysWorkout.exercises[idx];
+    setEditingExerciseIndex(idx);
+    setEditExerciseName(ex.exerciseName);
+    setEditExerciseSets(ex.targetSets);
+    setEditExerciseReps(ex.targetReps);
+    setEditExerciseLoad(ex.targetLoad);
+    setEditExerciseRest(ex.restSeconds || 60);
+    setEditExerciseNotes(ex.notes || "");
+  };
+
+  // Save updated exercise (checks catalog or preserves custom name)
+  const handleSaveEditExercise = () => {
+    if (editingExerciseIndex === null) return;
+    startTransition(async () => {
+      const res = await updateWorkoutExerciseAction({
+        exerciseIndex: editingExerciseIndex,
+        exerciseName: editExerciseName,
+        targetSets: editExerciseSets,
+        targetReps: editExerciseReps,
+        targetLoad: editExerciseLoad,
+        loadUnit: preferredUnit,
+        restSeconds: editExerciseRest,
+        notes: editExerciseNotes,
+      });
+
+      if (res.success) {
+        setStatusMessage(res.message);
+        setTodaysWorkout(res.todaysWorkout);
+        setEditingExerciseIndex(null);
+        refreshWorkout();
+        setTimeout(() => setStatusMessage(""), 3500);
+      } else {
+        setStatusMessage(res.message || "Failed to update exercise");
       }
     });
   };
@@ -829,6 +920,14 @@ export function ShorthandLogger() {
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenEditExercise(idx, e)}
+                          title="Edit exercise targets"
+                          className="p-2 rounded-xl text-zinc-500 hover:text-indigo-400 hover:bg-indigo-950/40 transition cursor-pointer"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => handleDeleteExercise(idx, e)}
@@ -1426,6 +1525,146 @@ export function ShorthandLogger() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Exercise Modal */}
+      {editingExerciseIndex !== null && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Edit Exercise</h3>
+                  <p className="text-[11px] font-mono text-zinc-400">Update training parameters & targets</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingExerciseIndex(null)}
+                className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form Fields */}
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                  Exercise Name
+                </label>
+                <input
+                  type="text"
+                  value={editExerciseName}
+                  onChange={(e) => setEditExerciseName(e.target.value)}
+                  placeholder="e.g. Incline Dumbbell Press, Bench Press, Custom..."
+                  className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none transition shadow-inner font-medium"
+                />
+                <p className="text-[10px] text-zinc-500 font-mono mt-1">
+                  Standardizes to catalog package if matched, otherwise writes custom name.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                    Target Sets
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={editExerciseSets}
+                    onChange={(e) => setEditExerciseSets(Number(e.target.value) || 1)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                    Target Reps
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={editExerciseReps}
+                    onChange={(e) => setEditExerciseReps(Number(e.target.value) || 1)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                    Target Load ({preferredUnit})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={editExerciseLoad}
+                    onChange={(e) => setEditExerciseLoad(Number(e.target.value) || 0)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                    Rest Seconds
+                  </label>
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={editExerciseRest}
+                    onChange={(e) => setEditExerciseRest(Number(e.target.value) || 60)}
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block mb-1.5">
+                    Coaching Notes
+                  </label>
+                  <input
+                    type="text"
+                    value={editExerciseNotes}
+                    onChange={(e) => setEditExerciseNotes(e.target.value)}
+                    placeholder="e.g. Focus on tempo, pause at bottom"
+                    className="w-full bg-zinc-900 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-zinc-800/80 bg-zinc-900/40 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingExerciseIndex(null)}
+                className="px-4 py-2 rounded-xl border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs font-medium transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isPending || !editExerciseName.trim()}
+                onClick={handleSaveEditExercise}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-lg shadow-indigo-600/30"
+              >
+                {isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>Save Changes</span>
+              </button>
             </div>
           </div>
         </div>
