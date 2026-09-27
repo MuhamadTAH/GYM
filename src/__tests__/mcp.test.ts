@@ -109,15 +109,16 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 13 streamlined action & state mutation tools", async () => {
+  it("lists all 14 streamlined action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(13);
+    expect(res.tools).toHaveLength(14);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("get_active_workout");
     expect(toolNames).toContain("generate_ai_workout");
     expect(toolNames).toContain("add_workout_exercise");
     expect(toolNames).toContain("update_workout_exercise");
+    expect(toolNames).toContain("delete_workout_exercise");
     expect(toolNames).toContain("search_exercise_catalog");
     expect(toolNames).toContain("get_exercise_guide");
     expect(toolNames).toContain("log_workout_set");
@@ -326,5 +327,56 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(guide.animationUrl).toContain(".gif");
     expect(guide.coachingCues.length).toBeGreaterThan(0);
     expect(guide.formWarnings.length).toBeGreaterThan(0);
+  });
+
+  it("schedules, queries, and updates workout on specific date like '29 of sep'", async () => {
+    const genRes = await client.callTool({
+      name: "generate_ai_workout",
+      arguments: {
+        prompt: "5-day split Lower #1 knee-spared",
+        date: "29 of sep",
+      },
+    });
+
+    expect(genRes.isError).toBeFalsy();
+    const genResult = JSON.parse(((genRes as any).content[0] as { text: string }).text);
+    expect(genResult.success).toBe(true);
+    expect(genResult.plan.exercises.length).toBeGreaterThan(0);
+    expect(genResult.todaysWorkout.exercises.length).toBeGreaterThan(0);
+
+    // Read back workout for 29 of sep using get_active_workout
+    const getRes = await client.callTool({
+      name: "get_active_workout",
+      arguments: {
+        date: "29 of sep",
+      },
+    });
+    expect(getRes.isError).toBeFalsy();
+    const getResult = JSON.parse(((getRes as any).content[0] as { text: string }).text);
+    expect(getResult.exercises.length).toBeGreaterThan(0);
+
+    // Add exercise to 29 of sep workout
+    const addRes = await client.callTool({
+      name: "add_workout_exercise",
+      arguments: {
+        exercise_name: "Barbell Squat",
+        target_sets: 3,
+        target_reps: 8,
+        date: "29 of sep",
+      },
+    });
+    expect(addRes.isError).toBeFalsy();
+    const addResult = JSON.parse(((addRes as any).content[0] as { text: string }).text);
+    expect(addResult.success).toBe(true);
+
+    // Delete exercise from 29 of sep workout
+    const delRes = await client.callTool({
+      name: "delete_workout_exercise",
+      arguments: {
+        exercise_index: addResult.todaysWorkout.exercises.length - 1,
+        date: "29 of sep",
+      },
+    });
+    expect(delRes.isError).toBeFalsy();
   });
 });

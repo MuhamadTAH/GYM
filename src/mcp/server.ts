@@ -25,6 +25,7 @@ import {
   generateWorkoutWithAIAction,
   addExerciseToWorkoutAction,
   updateWorkoutExerciseAction,
+  deleteWorkoutExerciseAction,
   searchExerciseCatalogAction,
   planDailyCaloriesWithAIAction,
   updateTodayCalorieUsageAction,
@@ -248,16 +249,22 @@ export function registerHandlers(server: Server) {
         {
           name: "get_active_workout",
           description:
-            "Fetch today's active workout session on the website, returning prescribed exercises, sets, reps, target loads, rest, notes, or rest day status.",
+            "Fetch the active workout session on the website for today or a specific date, returning prescribed exercises, sets, reps, target loads, rest, notes, or rest day status.",
           inputSchema: {
             type: "object",
-            properties: {},
+            properties: {
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'tomorrow', 'today'). If omitted, defaults to today.",
+              },
+            },
           },
         },
         {
           name: "generate_ai_workout",
           description:
-            "Generate a complete, personalized workout routine for the athlete using AI (or catalog engine) and immediately populate today's active session on the website.",
+            "Generate a complete, personalized workout routine for the athlete using AI (or catalog engine) and immediately populate the active session on the website for today or a specific date.",
           inputSchema: {
             type: "object",
             properties: {
@@ -270,13 +277,18 @@ export function registerHandlers(server: Server) {
                 type: "number",
                 description: "Target workout duration in minutes (default: 45).",
               },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date to schedule this workout on (e.g. '2026-09-29', '29 of sep', 'tomorrow', 'today'). If omitted, defaults to today.",
+              },
             },
           },
         },
         {
           name: "add_workout_exercise",
           description:
-            "Add an exercise from the 876-exercise catalog or custom name directly to today's active workout routine on the website.",
+            "Add an exercise from the 876-exercise catalog or custom name directly to a workout routine on the website for today or a specific date.",
           inputSchema: {
             type: "object",
             properties: {
@@ -309,6 +321,11 @@ export function registerHandlers(server: Server) {
                 type: "string",
                 description: "Optional coaching or form execution cues.",
               },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date to add this exercise to (e.g. '2026-09-29', '29 of sep', 'tomorrow', 'today'). If omitted, defaults to today.",
+              },
             },
             required: ["exercise_name"],
           },
@@ -316,13 +333,13 @@ export function registerHandlers(server: Server) {
         {
           name: "update_workout_exercise",
           description:
-            "Update an existing exercise in today's active workout routine on the website (modify sets, reps, load, rest, notes, or name).",
+            "Update an existing exercise in a workout routine on the website (modify sets, reps, load, rest, notes, or name) for today or a specific date.",
           inputSchema: {
             type: "object",
             properties: {
               exercise_index: {
                 type: "number",
-                description: "The 0-based index of the exercise in today's workout.",
+                description: "The 0-based index of the exercise in the workout.",
               },
               exercise_name: {
                 type: "string",
@@ -352,6 +369,31 @@ export function registerHandlers(server: Server) {
               notes: {
                 type: "string",
                 description: "Coaching notes or execution cues.",
+              },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep'). If omitted, defaults to today.",
+              },
+            },
+            required: ["exercise_index"],
+          },
+        },
+        {
+          name: "delete_workout_exercise",
+          description:
+            "Delete an exercise by index from a workout routine on the website for today or a specific date.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              exercise_index: {
+                type: "number",
+                description: "The 0-based index of the exercise to remove.",
+              },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep'). If omitted, defaults to today.",
               },
             },
             required: ["exercise_index"],
@@ -599,7 +641,8 @@ export function registerHandlers(server: Server) {
     try {
       switch (name) {
         case "get_active_workout": {
-          const result = await getTodaysWorkoutAction();
+          const date = args?.date !== undefined ? String(args.date) : undefined;
+          const result = await getTodaysWorkoutAction(date);
           return {
             content: [
               {
@@ -613,7 +656,8 @@ export function registerHandlers(server: Server) {
         case "generate_ai_workout": {
           const prompt = args?.prompt !== undefined ? String(args.prompt) : undefined;
           const targetMinutes = args?.target_minutes !== undefined ? Number(args.target_minutes) : undefined;
-          const result = await generateWorkoutWithAIAction({ prompt, targetMinutes });
+          const date = args?.date !== undefined ? String(args.date) : undefined;
+          const result = await generateWorkoutWithAIAction({ prompt, targetMinutes, date });
           return {
             content: [
               {
@@ -635,6 +679,7 @@ export function registerHandlers(server: Server) {
           const loadUnit = args?.load_unit === "lb" ? "lb" : "kg";
           const restSeconds = args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
           const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+          const date = args?.date !== undefined ? String(args.date) : undefined;
 
           const result = await addExerciseToWorkoutAction({
             exerciseName,
@@ -644,6 +689,7 @@ export function registerHandlers(server: Server) {
             loadUnit,
             restSeconds,
             notes,
+            date,
           });
 
           return {
@@ -668,6 +714,7 @@ export function registerHandlers(server: Server) {
           const loadUnit = args?.load_unit === "lb" ? "lb" : args?.load_unit === "kg" ? "kg" : undefined;
           const restSeconds = args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
           const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+          const date = args?.date !== undefined ? String(args.date) : undefined;
 
           const result = await updateWorkoutExerciseAction({
             exerciseIndex,
@@ -678,7 +725,27 @@ export function registerHandlers(server: Server) {
             loadUnit,
             restSeconds,
             notes,
+            date,
           });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "delete_workout_exercise": {
+          if (args?.exercise_index === undefined) {
+            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+          }
+          const exerciseIndex = Number(args.exercise_index);
+          const date = args?.date !== undefined ? String(args.date) : undefined;
+
+          const result = await deleteWorkoutExerciseAction(exerciseIndex, date);
 
           return {
             content: [

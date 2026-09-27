@@ -14,7 +14,8 @@ import {
   type MonthlyPhase,
   type LoggedItem,
 } from "@/db/schema";
-import { eq, desc, asc, and, ne, gte } from "drizzle-orm";
+import { eq, desc, asc, and, ne, gte, like } from "drizzle-orm";
+import { parseNaturalDate } from "@/lib/date-parser";
 import { parseGymShorthand, type ParsedShorthand } from "@/lib/parser";
 import {
   parseNaturalTelemetry,
@@ -97,7 +98,7 @@ export interface LoggedSetResponse {
 /**
  * Ensures a default demo user and active session exist in gym.db
  */
-export async function getOrCreateActiveSession(): Promise<{
+export async function getOrCreateActiveSession(targetDate?: string): Promise<{
   userId: string;
   sessionId: string;
   preferredUnit: "kg" | "lb";
@@ -143,65 +144,100 @@ export async function getOrCreateActiveSession(): Promise<{
     });
   }
 
-  // Check for existing in_progress session
-  const activeSessions = await db
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const dateStr = targetDate ? parseNaturalDate(targetDate) : todayIso;
+  const isTargetToday = dateStr === todayIso;
+
+  // 1. Look for a session for this specific calendar date
+  const dateSessions = await db
     .select()
     .from(workoutSessions)
     .where(
       and(
         eq(workoutSessions.userId, userId),
-        eq(workoutSessions.status, "in_progress")
+        like(workoutSessions.startedAt, `${dateStr}%`)
       )
     )
-    .orderBy(asc(workoutSessions.startedAt))
+    .orderBy(desc(workoutSessions.startedAt))
     .limit(1);
 
-  if (activeSessions.length > 0) {
+  if (dateSessions.length > 0) {
     return {
       userId,
-      sessionId: activeSessions[0].id,
+      sessionId: dateSessions[0].id,
       preferredUnit,
-      sessionName: activeSessions[0].sessionName,
+      sessionName: dateSessions[0].sessionName,
     };
   }
 
-  // Check for earliest planned workout session (activate it)
-  const plannedSessions = await db
-    .select()
-    .from(workoutSessions)
-    .where(
-      and(
-        eq(workoutSessions.userId, userId),
-        eq(workoutSessions.status, "planned"),
-        ne(workoutSessions.sessionType, "rest")
+  // 2. If target is today, check for existing in_progress session
+  if (isTargetToday) {
+    const activeSessions = await db
+      .select()
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          eq(workoutSessions.status, "in_progress")
+        )
       )
-    )
-    .orderBy(asc(workoutSessions.startedAt))
-    .limit(1);
+      .orderBy(asc(workoutSessions.startedAt))
+      .limit(1);
 
-  if (plannedSessions.length > 0) {
-    await db
-      .update(workoutSessions)
-      .set({ status: "in_progress" })
-      .where(eq(workoutSessions.id, plannedSessions[0].id));
+    if (activeSessions.length > 0) {
+      return {
+        userId,
+        sessionId: activeSessions[0].id,
+        preferredUnit,
+        sessionName: activeSessions[0].sessionName,
+      };
+    }
 
-    return {
-      userId,
-      sessionId: plannedSessions[0].id,
-      preferredUnit,
-      sessionName: plannedSessions[0].sessionName,
-    };
+    // Check for earliest planned workout session (activate it)
+    const plannedSessions = await db
+      .select()
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          eq(workoutSessions.status, "planned"),
+          ne(workoutSessions.sessionType, "rest")
+        )
+      )
+      .orderBy(asc(workoutSessions.startedAt))
+      .limit(1);
+
+    if (plannedSessions.length > 0) {
+      await db
+        .update(workoutSessions)
+        .set({ status: "in_progress" })
+        .where(eq(workoutSessions.id, plannedSessions[0].id));
+
+      return {
+        userId,
+        sessionId: plannedSessions[0].id,
+        preferredUnit,
+        sessionName: plannedSessions[0].sessionName,
+      };
+    }
   }
 
-  // Create new fallback active session
+  // 3. Create new session for dateStr
   const newSessionId = crypto.randomUUID();
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  const dateLabel = isNaN(d.getTime())
+    ? dateStr
+    : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const defaultSessionName = isTargetToday ? "Active Gym Floor Workout" : `Workout (${dateLabel})`;
+
   await db.insert(workoutSessions).values({
     id: newSessionId,
     userId,
-    sessionName: "Active Gym Floor Workout",
+    sessionName: defaultSessionName,
     sessionType: "custom",
-    status: "in_progress",
-    startedAt: new Date().toISOString(),
+    status: isTargetToday ? "in_progress" : "planned",
+    startedAt: `${dateStr}T09:00:00.000Z`,
     elapsedMinutes: 0,
     arbitrationHardStop: false,
     arbitrationDecision: "MAINTAIN",
@@ -209,13 +245,14 @@ export async function getOrCreateActiveSession(): Promise<{
     resolvedVolumeModifier: 1.0,
     activeDownRegulations: [],
     userOverrideActive: false,
+    sessionNotes: "[]",
   });
 
   return {
     userId,
     sessionId: newSessionId,
     preferredUnit,
-    sessionName: "Active Gym Floor Workout",
+    sessionName: defaultSessionName,
   };
 }
 
@@ -413,6 +450,7 @@ export interface TodaysWorkoutView {
   exercises: PlannedExercise[];
   weekNumber: number;
   dayIndex: number;
+  scheduledDate?: string;
   nextSession?: NextSessionView;
 }
 
@@ -537,10 +575,17 @@ export async function quickStartWorkoutAction(): Promise<{
 
 /**
  * Fetches the next uncompleted workout in sequence (ordered by startedAt ASC)
- * Never looks at calendar day; avoids the Missed-Day Glitch.
+/**
+ * Fetches the active workout for a given calendar date or next uncompleted session.
+ * Supports natural date strings (e.g. '2026-09-29', '29 of sep', 'tomorrow', 'today').
  */
-export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
+export async function getTodaysWorkoutAction(targetDate?: string): Promise<TodaysWorkoutView> {
   const existingUsers = await db.select().from(userProfiles).limit(1);
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const dateStr = targetDate ? parseNaturalDate(targetDate) : todayStr;
+  const isTargetToday = dateStr === todayStr;
+
   if (existingUsers.length === 0) {
     return {
       sessionId: "",
@@ -551,41 +596,67 @@ export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
       exercises: [],
       weekNumber: 1,
       dayIndex: 1,
+      scheduledDate: dateStr,
     };
   }
   const userId = existingUsers[0].id;
 
-  // Query uncompleted sessions in sequence order (startedAt ASC)
-  let uncompleted = await db
+  // 1. Look for a session for this specific date
+  const dateSessions = await db
     .select()
     .from(workoutSessions)
     .where(
       and(
         eq(workoutSessions.userId, userId),
-        ne(workoutSessions.status, "completed"),
-        ne(workoutSessions.status, "aborted")
+        like(workoutSessions.startedAt, `${dateStr}%`)
       )
     )
-    .orderBy(asc(workoutSessions.startedAt));
+    .orderBy(desc(workoutSessions.startedAt))
+    .limit(1);
 
-  // If no uncompleted sessions exist, do not auto-generate mock mesocycle!
-  if (uncompleted.length === 0) {
+  let currentSession = dateSessions[0];
+
+  // 2. If target is today and no date-specific session found, fallback to sequential uncompleted queue
+  if (!currentSession && isTargetToday) {
+    const uncompleted = await db
+      .select()
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          ne(workoutSessions.status, "completed"),
+          ne(workoutSessions.status, "aborted")
+        )
+      )
+      .orderBy(asc(workoutSessions.startedAt));
+
+    if (uncompleted.length > 0) {
+      currentSession = uncompleted[0];
+    }
+  }
+
+  // 3. If still no session exists for dateStr:
+  if (!currentSession) {
+    const d = new Date(`${dateStr}T12:00:00Z`);
+    const dateLabel = isNaN(d.getTime())
+      ? dateStr
+      : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
     return {
       sessionId: "",
-      sessionName: "No Active Plan",
+      sessionName: `Workout (${dateLabel})`,
       sessionType: "custom",
       status: "planned",
       isRestDay: false,
       exercises: [],
       weekNumber: 1,
       dayIndex: 1,
+      scheduledDate: dateStr,
     };
   }
 
-  const currentSession = uncompleted[0];
-
-  // If session is planned and is a workout, transition to in_progress
-  if (currentSession.status === "planned" && currentSession.sessionType !== "rest") {
+  // If session is planned and is today's workout, transition to in_progress
+  if (isTargetToday && currentSession.status === "planned" && currentSession.sessionType !== "rest") {
     await db
       .update(workoutSessions)
       .set({ status: "in_progress" })
@@ -602,31 +673,45 @@ export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
     }
   }
 
-  // Next session in sequence (if available)
+  // Next session in sequence (if available and viewing today)
   let nextSession: NextSessionView | undefined;
-  if (uncompleted.length > 1) {
-    const next = uncompleted[1];
-    let nextExCount = 0;
-    try {
-      if (next.sessionNotes) {
-        nextExCount = JSON.parse(next.sessionNotes).length;
+  if (isTargetToday) {
+    const uncompleted = await db
+      .select()
+      .from(workoutSessions)
+      .where(
+        and(
+          eq(workoutSessions.userId, userId),
+          ne(workoutSessions.status, "completed"),
+          ne(workoutSessions.status, "aborted")
+        )
+      )
+      .orderBy(asc(workoutSessions.startedAt));
+
+    if (uncompleted.length > 1) {
+      const next = uncompleted[1];
+      let nextExCount = 0;
+      try {
+        if (next.sessionNotes) {
+          nextExCount = JSON.parse(next.sessionNotes).length;
+        }
+      } catch {
+        nextExCount = 0;
       }
-    } catch {
-      nextExCount = 0;
+      nextSession = {
+        sessionId: next.id,
+        sessionName: next.sessionName,
+        sessionType: next.sessionType,
+        isRestDay: next.sessionType === "rest",
+        exerciseCount: nextExCount,
+      };
     }
-    nextSession = {
-      sessionId: next.id,
-      sessionName: next.sessionName,
-      sessionType: next.sessionType,
-      isRestDay: next.sessionType === "rest",
-      exerciseCount: nextExCount,
-    };
   }
 
-  const totalSessions = 28;
-  const currentSequence = totalSessions - uncompleted.length + 1;
-  const weekNumber = Math.max(1, Math.min(4, Math.ceil(currentSequence / 7)));
-  const dayIndex = ((currentSequence - 1) % 7) + 1;
+  // Calculate dayIndex from calendar day of week (Monday=1 .. Sunday=7)
+  const sessionDateObj = new Date(currentSession.startedAt || `${dateStr}T12:00:00Z`);
+  const rawDay = sessionDateObj.getDay(); // 0 is Sunday, 1 is Monday...
+  const calendarDayIndex = rawDay === 0 ? 7 : rawDay;
 
   return {
     sessionId: currentSession.id,
@@ -635,10 +720,38 @@ export async function getTodaysWorkoutAction(): Promise<TodaysWorkoutView> {
     status: currentSession.status as TodaysWorkoutView["status"],
     isRestDay: currentSession.sessionType === "rest",
     exercises,
-    weekNumber,
-    dayIndex,
+    weekNumber: 1,
+    dayIndex: calendarDayIndex,
+    scheduledDate: dateStr,
     nextSession,
   };
+}
+
+/**
+ * Returns all calendar dates (YYYY-MM-DD) that have active/scheduled workout sessions with exercises
+ */
+export async function getScheduledWorkoutDatesAction(): Promise<string[]> {
+  const existingUsers = await db.select().from(userProfiles).limit(1);
+  if (existingUsers.length === 0) return [];
+  const userId = existingUsers[0].id;
+
+  const sessions = await db
+    .select({ startedAt: workoutSessions.startedAt, sessionNotes: workoutSessions.sessionNotes })
+    .from(workoutSessions)
+    .where(eq(workoutSessions.userId, userId));
+
+  const datesWithExercises = new Set<string>();
+  for (const s of sessions) {
+    if (s.startedAt && s.sessionNotes) {
+      try {
+        const parsed = JSON.parse(s.sessionNotes);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          datesWithExercises.add(s.startedAt.slice(0, 10));
+        }
+      } catch {}
+    }
+  }
+  return Array.from(datesWithExercises);
 }
 
 /**
@@ -3014,18 +3127,19 @@ export async function updateLoggedFoodCaloriesAction(input: {
 
 /**
  * Server Action: Generates a tailored workout routine using Gemini AI (with catalog fallback)
- * and immediately assigns it to the athlete's active workout session.
+ * and immediately assigns it to the athlete's active workout session (optionally for a specific date).
  */
 export async function generateWorkoutWithAIAction(options?: {
   prompt?: string;
   targetMinutes?: number;
+  date?: string;
 }): Promise<{
   success: boolean;
   message: string;
   plan: AIWorkoutPlan;
   todaysWorkout: TodaysWorkoutView;
 }> {
-  const sessionData = await getOrCreateActiveSession();
+  const sessionData = await getOrCreateActiveSession(options?.date);
   const user = (
     await db.select().from(userProfiles).where(eq(userProfiles.id, sessionData.userId)).limit(1)
   )[0];
@@ -3055,7 +3169,7 @@ export async function generateWorkoutWithAIAction(options?: {
     })
     .where(eq(workoutSessions.id, sessionData.sessionId));
 
-  const todaysWorkout = await getTodaysWorkoutAction();
+  const todaysWorkout = await getTodaysWorkoutAction(options?.date);
 
   return {
     success: true,
@@ -3066,7 +3180,7 @@ export async function generateWorkoutWithAIAction(options?: {
 }
 
 /**
- * Server Action: Appends an exercise from the catalog or custom entry to today's active workout.
+ * Server Action: Appends an exercise from the catalog or custom entry to a workout session (optionally for a specific date).
  */
 export async function addExerciseToWorkoutAction(payload: {
   exerciseName: string;
@@ -3076,12 +3190,13 @@ export async function addExerciseToWorkoutAction(payload: {
   loadUnit?: PreferredUnit;
   restSeconds?: number;
   notes?: string;
+  date?: string;
 }): Promise<{
   success: boolean;
   message: string;
   todaysWorkout: TodaysWorkoutView;
 }> {
-  const sessionData = await getOrCreateActiveSession();
+  const sessionData = await getOrCreateActiveSession(payload.date);
   const sessionRow = (
     await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
   )[0];
@@ -3120,18 +3235,19 @@ export async function addExerciseToWorkoutAction(payload: {
     })
     .where(eq(workoutSessions.id, sessionData.sessionId));
 
-  const todaysWorkout = await getTodaysWorkoutAction();
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+  const dateLabel = payload.date ? `workout for ${payload.date}` : "today's workout";
   return {
     success: true,
     message: resolved.fromCatalog
-      ? `Added "${resolved.standardizedName}" from exercise package to today's workout.`
-      : `Added custom exercise "${resolved.standardizedName}" to today's workout.`,
+      ? `Added "${resolved.standardizedName}" from exercise package to ${dateLabel}.`
+      : `Added custom exercise "${resolved.standardizedName}" to ${dateLabel}.`,
     todaysWorkout,
   };
 }
 
 /**
- * Server Action: Updates an existing exercise in today's active workout routine.
+ * Server Action: Updates an existing exercise in a workout routine (optionally for a specific date).
  * Resolves exercise name against the 876-exercise catalog; if not found, preserves the custom name.
  */
 export async function updateWorkoutExerciseAction(payload: {
@@ -3143,12 +3259,13 @@ export async function updateWorkoutExerciseAction(payload: {
   loadUnit?: PreferredUnit;
   restSeconds?: number;
   notes?: string;
+  date?: string;
 }): Promise<{
   success: boolean;
   message: string;
   todaysWorkout: TodaysWorkoutView;
 }> {
-  const sessionData = await getOrCreateActiveSession();
+  const sessionData = await getOrCreateActiveSession(payload.date);
   const sessionRow = (
     await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
   )[0];
@@ -3163,7 +3280,7 @@ export async function updateWorkoutExerciseAction(payload: {
   }
 
   if (payload.exerciseIndex < 0 || payload.exerciseIndex >= exercises.length) {
-    const todaysWorkout = await getTodaysWorkoutAction();
+    const todaysWorkout = await getTodaysWorkoutAction(payload.date);
     return {
       success: false,
       message: "Exercise index out of range.",
@@ -3204,7 +3321,7 @@ export async function updateWorkoutExerciseAction(payload: {
     })
     .where(eq(workoutSessions.id, sessionData.sessionId));
 
-  const todaysWorkout = await getTodaysWorkoutAction();
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
   return {
     success: true,
     message: fromCatalog
@@ -3215,14 +3332,17 @@ export async function updateWorkoutExerciseAction(payload: {
 }
 
 /**
- * Server Action: Deletes an exercise by index from today's active workout.
+ * Server Action: Deletes an exercise by index from a workout (optionally for a specific date).
  */
-export async function deleteWorkoutExerciseAction(exerciseIndex: number): Promise<{
+export async function deleteWorkoutExerciseAction(
+  exerciseIndex: number,
+  date?: string
+): Promise<{
   success: boolean;
   message: string;
   todaysWorkout: TodaysWorkoutView;
 }> {
-  const sessionData = await getOrCreateActiveSession();
+  const sessionData = await getOrCreateActiveSession(date);
   const sessionRow = (
     await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
   )[0];
@@ -3245,15 +3365,16 @@ export async function deleteWorkoutExerciseAction(exerciseIndex: number): Promis
       })
       .where(eq(workoutSessions.id, sessionData.sessionId));
 
-    const todaysWorkout = await getTodaysWorkoutAction();
+    const todaysWorkout = await getTodaysWorkoutAction(date);
+    const dateLabel = date ? `workout for ${date}` : "today's workout";
     return {
       success: true,
-      message: `Removed "${removed[0]?.exerciseName || "exercise"}" from today's workout.`,
+      message: `Removed "${removed[0]?.exerciseName || "exercise"}" from ${dateLabel}.`,
       todaysWorkout,
     };
   }
 
-  const todaysWorkout = await getTodaysWorkoutAction();
+  const todaysWorkout = await getTodaysWorkoutAction(date);
   return {
     success: false,
     message: "Exercise index out of range.",

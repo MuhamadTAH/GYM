@@ -45,6 +45,7 @@ import {
   skipRestDayAction,
   quickStartWorkoutAction,
   getDailyGoalsAction,
+  getScheduledWorkoutDatesAction,
   generateWorkoutWithAIAction,
   addExerciseToWorkoutAction,
   updateWorkoutExerciseAction,
@@ -81,9 +82,12 @@ export function ShorthandLogger() {
   const [viewMode, setViewMode] = useState<"routine" | "dashboard" | "player">("routine");
 
   // Routine & Active Workout state
+  const getTodayIso = () => new Date().toISOString().split("T")[0];
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayIso());
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+  const [scheduledDates, setScheduledDates] = useState<string[]>([]);
   const [todaysWorkout, setTodaysWorkout] = useState<TodaysWorkoutView | null>(null);
   const [goals, setGoals] = useState<DailyGoalsData | null>(null);
-  const [activeDay, setActiveDay] = useState<number>(3); // 1 to 7
   const [activeExIndex, setActiveExIndex] = useState<number>(0);
   const [currentSetNumber, setCurrentSetNumber] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState("");
@@ -142,16 +146,81 @@ export function ShorthandLogger() {
 
   const { speakDirective } = useAudioCue(activeDirective, isAudioEnabled);
 
-  // Load today's workout & metrics (with offline phone caching)
-  const refreshWorkout = () => {
-    getTodaysWorkoutAction()
+  // Calculate the 7 days of the week based on weekOffset (Monday through Sunday)
+  const getWeekDays = (offsetWeeks: number) => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysFromMonday = (dayOfWeek + 6) % 7;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - daysFromMonday + offsetWeeks * 7);
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateStr = d.toISOString().split("T")[0];
+      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
+      const dayNum = d.getDate();
+      const isToday = dateStr === getTodayIso();
+      days.push({
+        dateStr,
+        dayName,
+        dayNum,
+        isToday,
+      });
+    }
+    return days;
+  };
+
+  // Switch active calendar date and load its workout
+  const handleSelectDate = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysFromMonday = (dayOfWeek + 6) % 7;
+    const currentMonday = new Date(today);
+    currentMonday.setDate(today.getDate() - daysFromMonday);
+    const chosenDate = new Date(dateStr + "T00:00:00");
+    const diffDays = Math.floor((chosenDate.getTime() - currentMonday.getTime()) / (1000 * 60 * 60 * 24));
+    const targetOffset = Math.floor(diffDays / 7);
+    if (targetOffset !== weekOffset) {
+      setWeekOffset(targetOffset);
+    }
+
+    setStatusMessage(`Loading workout for ${dateStr}...`);
+    getTodaysWorkoutAction(dateStr)
       .then((tw) => {
         if (tw) {
           setTodaysWorkout(tw);
-          try {
-            localStorage.setItem("gym_cached_workout", JSON.stringify(tw));
-          } catch {}
-          if (tw.dayIndex) setActiveDay(tw.dayIndex);
+          setActiveExIndex(0);
+          setStatusMessage("");
+          if (tw.exercises.length > 0) {
+            const firstEx = tw.exercises[0];
+            setCurrentLoad(firstEx.targetLoad);
+            setCurrentReps(firstEx.targetReps);
+            setCurrentRpe(firstEx.targetRpe || 8);
+            setPreferredUnit(firstEx.loadUnit);
+          }
+        }
+      })
+      .catch(() => {
+        setStatusMessage("Could not load workout for date.");
+        setTimeout(() => setStatusMessage(""), 3000);
+      });
+  };
+
+  // Load workout & metrics (with offline phone caching)
+  const refreshWorkout = (targetDate?: string) => {
+    const dateToLoad = targetDate || selectedDate;
+    getTodaysWorkoutAction(dateToLoad)
+      .then((tw) => {
+        if (tw) {
+          setTodaysWorkout(tw);
+          if (dateToLoad === getTodayIso()) {
+            try {
+              localStorage.setItem("gym_cached_workout", JSON.stringify(tw));
+            } catch {}
+          }
           if (tw.exercises.length > 0) {
             const firstEx = tw.exercises[activeExIndex] || tw.exercises[0];
             setCurrentLoad(firstEx.targetLoad);
@@ -168,10 +237,17 @@ export function ShorthandLogger() {
           if (cached) {
             const tw = JSON.parse(cached);
             setTodaysWorkout(tw);
-            if (tw.dayIndex) setActiveDay(tw.dayIndex);
           }
         } catch {}
       });
+
+    getScheduledWorkoutDatesAction()
+      .then((dates) => {
+        if (Array.isArray(dates)) {
+          setScheduledDates(dates);
+        }
+      })
+      .catch(() => {});
 
     getDailyGoalsAction()
       .then((g) => {
@@ -388,18 +464,21 @@ export function ShorthandLogger() {
   const handleGenerateAiWorkout = (promptOverride?: string) => {
     const promptToUse = promptOverride || aiWorkoutPrompt;
     setIsGeneratingAiWorkout(true);
-    setStatusMessage("✨ AI Coach is designing your personalized routine...");
+    setStatusMessage(`✨ AI Coach is designing routine for ${selectedDate}...`);
 
     startTransition(async () => {
       try {
-        const res = await generateWorkoutWithAIAction({ prompt: promptToUse });
+        const res = await generateWorkoutWithAIAction({
+          prompt: promptToUse,
+          date: selectedDate,
+        });
         if (res.success) {
           setStatusMessage(`✨ Generated: ${res.plan.sessionName}`);
           setTodaysWorkout(res.todaysWorkout);
           setActiveExIndex(0);
           setIsAiBuilderOpen(false);
           setAiWorkoutPrompt("");
-          refreshWorkout();
+          refreshWorkout(selectedDate);
         } else {
           setStatusMessage("Could not generate routine. Please try again.");
         }
@@ -412,18 +491,18 @@ export function ShorthandLogger() {
     });
   };
 
-  // Delete exercise from today's routine
+  // Delete exercise from selected date's routine
   const handleDeleteExercise = (idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
     startTransition(async () => {
-      const res = await deleteWorkoutExerciseAction(idx);
+      const res = await deleteWorkoutExerciseAction(idx, selectedDate);
       if (res.success) {
         setStatusMessage(res.message);
         setTodaysWorkout(res.todaysWorkout);
         if (activeExIndex >= res.todaysWorkout.exercises.length) {
           setActiveExIndex(Math.max(0, res.todaysWorkout.exercises.length - 1));
         }
-        refreshWorkout();
+        refreshWorkout(selectedDate);
         setTimeout(() => setStatusMessage(""), 3000);
       }
     });
@@ -456,13 +535,14 @@ export function ShorthandLogger() {
         loadUnit: preferredUnit,
         restSeconds: editExerciseRest,
         notes: editExerciseNotes,
+        date: selectedDate,
       });
 
       if (res.success) {
         setStatusMessage(res.message);
         setTodaysWorkout(res.todaysWorkout);
         setEditingExerciseIndex(null);
-        refreshWorkout();
+        refreshWorkout(selectedDate);
         setTimeout(() => setStatusMessage(""), 3500);
       } else {
         setStatusMessage(res.message || "Failed to update exercise");
@@ -481,18 +561,19 @@ export function ShorthandLogger() {
     });
   };
 
-  // Add exercise from catalog into today's workout
+  // Add exercise from catalog into selected date's workout
   const handleAddExerciseFromCatalog = (exName: string) => {
     startTransition(async () => {
       const res = await addExerciseToWorkoutAction({
         exerciseName: exName,
         loadUnit: preferredUnit,
+        date: selectedDate,
       });
       if (res.success) {
         setStatusMessage(res.message);
         setTodaysWorkout(res.todaysWorkout);
         setIsAddExerciseOpen(false);
-        refreshWorkout();
+        refreshWorkout(selectedDate);
         setTimeout(() => setStatusMessage(""), 3000);
       }
     });
@@ -674,35 +755,109 @@ export function ShorthandLogger() {
               </div>
             </div>
 
-            {/* Date Row */}
-            <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-mono">
-              <span className="font-semibold text-zinc-200">
-                Today, {new Date().toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
-              </span>
-              <span className="text-zinc-600">⌵</span>
+            {/* Calendar Week Navigation & Date Header */}
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setWeekOffset((prev) => prev - 1)}
+                  className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition cursor-pointer"
+                  title="Previous Week"
+                  aria-label="Previous Week"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWeekOffset((prev) => prev + 1)}
+                  className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition cursor-pointer"
+                  title="Next Week"
+                  aria-label="Next Week"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+                {selectedDate !== getTodayIso() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWeekOffset(0);
+                      handleSelectDate(getTodayIso());
+                    }}
+                    className="ml-1 px-2 py-1 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 hover:text-white text-[11px] font-mono font-semibold transition cursor-pointer"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+
+              {/* Selected Date display + native datepicker */}
+              <div className="flex items-center gap-1.5 relative">
+                <label
+                  htmlFor="workout-date-picker"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 hover:border-zinc-700 transition cursor-pointer font-mono text-xs"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="font-semibold text-zinc-200">
+                    {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", {
+                      weekday: "short",
+                      day: "numeric",
+                      month: "short",
+                    })}
+                  </span>
+                  {selectedDate === getTodayIso() && (
+                    <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-bold border border-indigo-500/30">
+                      Today
+                    </span>
+                  )}
+                </label>
+                <input
+                  id="workout-date-picker"
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    if (e.target.value) handleSelectDate(e.target.value);
+                  }}
+                  className="absolute inset-0 opacity-0 pointer-events-auto cursor-pointer w-full"
+                />
+              </div>
             </div>
 
-            {/* Horizontal Day Selector Pills: Day 1 to Day 7 */}
+            {/* Horizontal Dynamic Date Selector Pills (Mon 28, Tue 29, etc.) */}
             <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((dayNum) => {
-                const isActive = activeDay === dayNum;
+              {getWeekDays(weekOffset).map((day) => {
+                const isSelected = selectedDate === day.dateStr;
+                const hasWorkout = scheduledDates.includes(day.dateStr);
+
                 return (
                   <button
-                    key={dayNum}
+                    key={day.dateStr}
                     type="button"
-                    onClick={() => setActiveDay(dayNum)}
-                    className={`py-3 rounded-2xl flex flex-col items-center justify-center transition cursor-pointer ${
-                      isActive
+                    onClick={() => handleSelectDate(day.dateStr)}
+                    className={`relative py-2.5 sm:py-3 rounded-2xl flex flex-col items-center justify-center transition cursor-pointer ${
+                      isSelected
                         ? "bg-[#5850ec] text-white shadow-lg shadow-indigo-600/30 scale-105"
-                        : "bg-zinc-900/60 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                        : "bg-zinc-900/70 border border-zinc-800/80 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
                     }`}
                   >
-                    <span className="text-[10px] font-mono tracking-tight font-medium opacity-80">
-                      Day
+                    <span
+                      className={`text-[10px] font-mono tracking-tight font-medium ${
+                        isSelected ? "text-indigo-100" : day.isToday ? "text-indigo-400 font-bold" : "text-zinc-400"
+                      }`}
+                    >
+                      {day.dayName}
                     </span>
                     <span className="text-sm sm:text-base font-bold font-mono">
-                      {dayNum}
+                      {day.dayNum}
                     </span>
+                    {/* Indicator dot if workout exists for this date */}
+                    {hasWorkout && (
+                      <span
+                        className={`absolute bottom-1 w-1.5 h-1.5 rounded-full ${
+                          isSelected ? "bg-white" : "bg-indigo-400 animate-pulse"
+                        }`}
+                        title="Workout scheduled"
+                      />
+                    )}
                   </button>
                 );
               })}
@@ -779,8 +934,14 @@ export function ShorthandLogger() {
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-zinc-500 font-mono">
-                      Uses 876-exercise catalog &amp; periodization
+                    <span className="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-indigo-400" />
+                      Target Date:{" "}
+                      <span className="text-zinc-200 font-semibold">
+                        {selectedDate === getTodayIso()
+                          ? `Today (${selectedDate})`
+                          : selectedDate}
+                      </span>
                     </span>
                     <button
                       type="button"
@@ -844,7 +1005,16 @@ export function ShorthandLogger() {
             ) : exercisesList.length === 0 ? (
               <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800 text-center space-y-4">
                 <Dumbbell className="w-8 h-8 text-zinc-600 mx-auto" />
-                <h3 className="text-sm font-bold text-white">No Planned Exercises for Today</h3>
+                <h3 className="text-sm font-bold text-white">
+                  No Planned Exercises for{" "}
+                  {selectedDate === getTodayIso()
+                    ? "Today"
+                    : new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                </h3>
                 <p className="text-xs text-zinc-400 max-w-sm mx-auto">
                   Choose a split, have the AI program your session, or browse 876 exercises.
                 </p>
@@ -855,7 +1025,16 @@ export function ShorthandLogger() {
                     className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-indigo-600/20"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>✨ AI Generate Full Body</span>
+                    <span>
+                      ✨ AI Generate Routine (
+                      {selectedDate === getTodayIso()
+                        ? "Today"
+                        : new Date(selectedDate + "T00:00:00").toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                      )
+                    </span>
                   </button>
                   <button
                     type="button"
