@@ -97,6 +97,15 @@ export const workoutSessions = sqliteTable("workout_sessions", {
     .default(false),
   userOverrideReason: text("user_override_reason"),
   sessionNotes: text("session_notes"),
+
+  // Workout Debrief & Athlete Reflection
+  athleteRating: integer("athlete_rating"), // 1 to 5 stars
+  sessionRpe: real("session_rpe"), // 1 to 10 scale
+  energyLevel: text("energy_level"), // high, moderate, low, drained
+  muscleSoreness: text("muscle_soreness"), // none, mild, moderate, severe
+  athleteDebrief: text("athlete_debrief"), // athlete's reflection notes on how the workout went
+  coachFeedback: text("coach_feedback"), // AI coach reflection response and autoregulation commentary
+  debriefCompletedAt: text("debrief_completed_at"),
 });
 
 /**
@@ -322,3 +331,47 @@ export const dailyNutritionLogs = sqliteTable("daily_nutrition_logs", {
 
 export type DailyNutritionLogRow = typeof dailyNutritionLogs.$inferSelect;
 export type InsertDailyNutritionLogRow = typeof dailyNutritionLogs.$inferInsert;
+
+/**
+ * CORE RELATIONAL TABLE: body_measurements
+ * Tracks athlete's body weight and circumference sizes (arms, legs, waist, etc.)
+ * with support for current metrics, target goals, and historical progress.
+ */
+export const bodyMeasurements = sqliteTable("body_measurements", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => userProfiles.id, { onDelete: "cascade" }),
+  date: text("date").notNull(), // ISO Date: YYYY-MM-DD
+  weight: real("weight"),
+  weightGoal: real("weight_goal"),
+  weightUnit: text("weight_unit", { enum: ["kg", "lb"] }).default("kg"),
+  sizeUnit: text("size_unit", { enum: ["cm", "in"] }).default("cm"),
+
+  // Current Sizes
+  armSize: real("arm_size"), // Biceps / arms
+  legSize: real("leg_size"), // Thighs / quads
+  waistSize: real("waist_size"),
+  chestSize: real("chest_size"),
+  hipSize: real("hip_size"),
+  calfSize: real("calf_size"),
+  shoulderSize: real("shoulder_size"),
+  neckSize: real("neck_size"),
+
+  // Target Goal Sizes
+  armSizeGoal: real("arm_size_goal"),
+  legSizeGoal: real("leg_size_goal"),
+  waistSizeGoal: real("waist_size_goal"),
+  chestSizeGoal: real("chest_size_goal"),
+  hipSizeGoal: real("hip_size_goal"),
+  calfSizeGoal: real("calf_size_goal"),
+  shoulderSizeGoal: real("shoulder_size_goal"),
+  neckSizeGoal: real("neck_size_goal"),
+
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type BodyMeasurementRow = typeof bodyMeasurements.$inferSelect;
+export type InsertBodyMeasurementRow = typeof bodyMeasurements.$inferInsert;

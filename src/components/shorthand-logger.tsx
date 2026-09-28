@@ -34,6 +34,10 @@ import {
   Loader2,
   Wand2,
   Edit2,
+  Star,
+  MessageSquare,
+  Lightbulb,
+  BookOpen,
 } from "lucide-react";
 import {
   submitShorthandSetAction,
@@ -63,6 +67,8 @@ import type { CatalogExercise } from "@/lib/exercise-catalog";
 import { AudioCuePlayer, useAudioCue } from "./audio-cue";
 import { ProfileModal } from "./profile-modal";
 import { ExerciseGuideModal } from "./exercise-guide-modal";
+import { WorkoutDebriefModal } from "./workout-debrief-modal";
+import { ExerciseGuideEditModal } from "./exercise-guide-edit-modal";
 import { getExerciseGuide, type ExerciseGuide } from "@/lib/exercises-data";
 
 interface RecentSetDisplay {
@@ -117,6 +123,9 @@ export function ShorthandLogger() {
   // Modals state
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isDebriefModalOpen, setIsDebriefModalOpen] = useState(false);
+  const [editingGuideExerciseIndex, setEditingGuideExerciseIndex] = useState<number | null>(null);
+  const [expandedGuideIndices, setExpandedGuideIndices] = useState<number[]>([]);
   const [selectedGuide, setSelectedGuide] = useState<ExerciseGuide | null>(null);
   const [completionResult, setCompletionResult] = useState<{
     message: string;
@@ -619,6 +628,43 @@ export function ShorthandLogger() {
         onClose={() => setIsGuideOpen(false)}
       />
 
+      {/* Post-Workout Debrief & Rating Modal */}
+      <WorkoutDebriefModal
+        isOpen={isDebriefModalOpen}
+        onClose={() => setIsDebriefModalOpen(false)}
+        sessionName={todaysWorkout?.sessionName}
+        targetDate={selectedDate}
+        existingRating={todaysWorkout?.athleteRating}
+        existingRpe={todaysWorkout?.sessionRpe}
+        existingEnergy={todaysWorkout?.energyLevel as any}
+        existingSoreness={todaysWorkout?.muscleSoreness as any}
+        existingDebrief={todaysWorkout?.athleteDebrief}
+        existingCoachFeedback={todaysWorkout?.coachFeedback}
+        onSubmitted={(tw) => {
+          setTodaysWorkout(tw);
+          setStatusMessage("Workout report submitted!");
+          setTimeout(() => setStatusMessage(""), 3500);
+        }}
+      />
+
+      {/* Exercise Benefits & How-To Guide Editor Modal */}
+      {editingGuideExerciseIndex !== null && todaysWorkout?.exercises?.[editingGuideExerciseIndex] && (
+        <ExerciseGuideEditModal
+          isOpen={editingGuideExerciseIndex !== null}
+          onClose={() => setEditingGuideExerciseIndex(null)}
+          exerciseIndex={editingGuideExerciseIndex}
+          exerciseName={todaysWorkout.exercises[editingGuideExerciseIndex].exerciseName}
+          targetDate={selectedDate}
+          initialBenefits={todaysWorkout.exercises[editingGuideExerciseIndex].benefits}
+          initialInstructions={todaysWorkout.exercises[editingGuideExerciseIndex].instructions}
+          onSaved={(tw) => {
+            setTodaysWorkout(tw);
+            setStatusMessage("Updated exercise benefits & guide!");
+            setTimeout(() => setStatusMessage(""), 3500);
+          }}
+        />
+      )}
+
       {/* Floating Status Notification */}
       {statusMessage && (
         <div className="fixed top-16 right-4 z-50 px-4 py-2.5 rounded-2xl bg-zinc-900 border border-indigo-500/80 text-indigo-300 text-xs font-mono shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
@@ -699,61 +745,102 @@ export function ShorthandLogger() {
         <div className="space-y-4 animate-in fade-in duration-200">
           {/* Main Card Container */}
           <div className="bg-zinc-950 border border-zinc-800/80 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
-            {/* Header: Back & Title */}
-            <div className="flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => setViewMode("dashboard")}
-                className="w-9 h-9 rounded-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition cursor-pointer"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <h2 className="text-base sm:text-lg font-bold tracking-tight text-white capitalize">
-                {todaysWorkout?.sessionName || "Full Body Workout"}
-              </h2>
-              <div className="relative">
+            {/* Header: Back, Title & Workout Debrief Button */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <button
                   type="button"
-                  onClick={() => setShowOptionsMenu(!showOptionsMenu)}
-                  className="w-9 h-9 rounded-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition cursor-pointer"
+                  onClick={() => setViewMode("dashboard")}
+                  className="w-9 h-9 rounded-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition cursor-pointer shrink-0"
                 >
-                  <MoreVertical className="w-4 h-4" />
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <h2 className="text-base sm:text-lg font-bold tracking-tight text-white capitalize truncate">
+                  {todaysWorkout?.sessionName || "Full Body Workout"}
+                </h2>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsDebriefModalOpen(true)}
+                  className="px-3 py-1.5 rounded-full bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-300 font-mono text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                  title="Submit post-workout reflection report and get AI coach feedback"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    {todaysWorkout?.athleteRating ? `Report: ${todaysWorkout.athleteRating}⭐` : "Workout Report"}
+                  </span>
                 </button>
 
-                {showOptionsMenu && (
-                  <div className="absolute right-0 top-11 w-48 bg-zinc-900 border border-zinc-800 rounded-2xl p-1.5 shadow-2xl z-30 text-xs font-mono space-y-1">
-                    {todaysWorkout?.nextSession && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+                    className="w-9 h-9 rounded-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition cursor-pointer"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+
+                  {showOptionsMenu && (
+                    <div className="absolute right-0 top-11 w-48 bg-zinc-900 border border-zinc-800 rounded-2xl p-1.5 shadow-2xl z-30 text-xs font-mono space-y-1">
+                      {todaysWorkout?.nextSession && (
+                        <button
+                          type="button"
+                          onClick={handleSwapOrder}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-zinc-800 text-zinc-300 flex items-center gap-2"
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Swap with Next</span>
+                        </button>
+                      )}
+                      {todaysWorkout?.isRestDay && (
+                        <button
+                          type="button"
+                          onClick={handleSkipRest}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-zinc-800 text-zinc-300 flex items-center gap-2"
+                        >
+                          <FastForward className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Skip Rest Day</span>
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={handleSwapOrder}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-zinc-800 text-zinc-300 flex items-center gap-2"
+                        onClick={handleCompleteSession}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-emerald-950/60 text-emerald-400 flex items-center gap-2"
                       >
-                        <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Swap with Next</span>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Finish Workout</span>
                       </button>
-                    )}
-                    {todaysWorkout?.isRestDay && (
-                      <button
-                        type="button"
-                        onClick={handleSkipRest}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-zinc-800 text-zinc-300 flex items-center gap-2"
-                      >
-                        <FastForward className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Skip Rest Day</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleCompleteSession}
-                      className="w-full text-left px-3 py-2 rounded-xl hover:bg-emerald-950/60 text-emerald-400 flex items-center gap-2"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Finish Workout</span>
-                    </button>
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
+
+            {/* Athlete Post-Workout Debrief Summary Banner */}
+            {todaysWorkout?.athleteRating && (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-zinc-900/60 to-zinc-900/40 border border-amber-500/30 text-xs font-mono space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-amber-400 font-bold flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    Session Rating: {todaysWorkout.athleteRating}/5 • RPE {todaysWorkout.sessionRpe || 8}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDebriefModalOpen(true)}
+                    className="text-[10px] text-amber-300 hover:underline cursor-pointer"
+                  >
+                    Edit Debrief &gt;
+                  </button>
+                </div>
+                {todaysWorkout.coachFeedback && (
+                  <p className="text-zinc-300 font-sans text-xs italic leading-relaxed">
+                    "{todaysWorkout.coachFeedback}"
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Calendar Week Navigation & Date Header */}
             <div className="flex items-center justify-between gap-2 text-xs">
@@ -1058,65 +1145,141 @@ export function ShorthandLogger() {
                 {exercisesList.map((ex, idx) => {
                   const guide = getExerciseGuide(ex.exerciseName);
                   const isCurrent = activeExIndex === idx;
+                  const isGuideExpanded = expandedGuideIndices.includes(idx);
 
                   return (
                     <div
                       key={idx}
-                      onClick={() => {
-                        setActiveExIndex(idx);
-                        setViewMode("player");
-                      }}
-                      className={`p-3 rounded-2xl flex items-center justify-between gap-3 border transition cursor-pointer ${
+                      className={`p-3 sm:p-3.5 rounded-2xl border transition ${
                         isCurrent
                           ? "bg-zinc-900/90 border-indigo-500/50 shadow-md shadow-indigo-600/10"
                           : "bg-zinc-900/40 border-zinc-800/80 hover:bg-zinc-900/80 hover:border-zinc-700"
                       }`}
                     >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        {/* Square Movement Animated Thumbnail */}
-                        <div className="w-14 h-14 rounded-2xl overflow-hidden bg-black/60 border border-zinc-800 shrink-0 flex items-center justify-center">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={guide.animationUrl}
-                            alt={guide.name}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = guide.thumbnailUrl;
-                            }}
-                          />
+                      <div
+                        onClick={() => {
+                          setActiveExIndex(idx);
+                          setViewMode("player");
+                        }}
+                        className="flex items-center justify-between gap-3 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          {/* Square Movement Animated Thumbnail */}
+                          <div className="w-14 h-14 rounded-2xl overflow-hidden bg-black/60 border border-zinc-800 shrink-0 flex items-center justify-center">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={guide.animationUrl}
+                              alt={guide.name}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = guide.thumbnailUrl;
+                              }}
+                            />
+                          </div>
+
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-bold text-white truncate capitalize">
+                              {guide.name || ex.exerciseName.replace(/_/g, " ")}
+                            </h4>
+                            <p className="text-xs font-mono text-zinc-400 mt-0.5">
+                              {ex.targetSets} sets × {ex.targetReps} reps @ {ex.targetLoad}
+                              {ex.loadUnit}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-white truncate capitalize">
-                            {guide.name || ex.exerciseName.replace(/_/g, " ")}
-                          </h4>
-                          <p className="text-xs font-mono text-zinc-400 mt-0.5">
-                            {ex.targetSets} sets × {ex.targetReps} reps @ {ex.targetLoad}
-                            {ex.loadUnit}
-                          </p>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenEditExercise(idx, e)}
+                            title="Edit exercise targets"
+                            className="p-2 rounded-xl text-zinc-500 hover:text-indigo-400 hover:bg-indigo-950/40 transition cursor-pointer"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteExercise(idx, e)}
+                            title="Remove exercise"
+                            className="p-2 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-950/40 transition cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                          <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Benefits & How-To (Why and How) Section */}
+                      <div className="mt-2.5 pt-2 border-t border-zinc-800/60 flex items-center justify-between text-xs">
                         <button
                           type="button"
-                          onClick={(e) => handleOpenEditExercise(idx, e)}
-                          title="Edit exercise targets"
-                          className="p-2 rounded-xl text-zinc-500 hover:text-indigo-400 hover:bg-indigo-950/40 transition cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedGuideIndices((prev) =>
+                              prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]
+                            );
+                          }}
+                          className="font-mono text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1.5 transition cursor-pointer font-semibold"
                         >
-                          <Edit2 className="w-4 h-4" />
+                          <Lightbulb className="w-3.5 h-3.5" />
+                          <span>
+                            {isGuideExpanded ? "Hide Benefits & How-To" : "💡 Why & How To Do It"}
+                          </span>
+                          {(ex.benefits || (ex.instructions && ex.instructions.length > 0)) && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          )}
                         </button>
+
                         <button
                           type="button"
-                          onClick={(e) => handleDeleteExercise(idx, e)}
-                          title="Remove exercise"
-                          className="p-2 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-950/40 transition cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingGuideExerciseIndex(idx);
+                          }}
+                          className="font-mono text-[10px] text-zinc-400 hover:text-amber-300 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-800/60 hover:bg-zinc-800 transition cursor-pointer"
+                          title="Write or edit benefits and execution steps"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Edit2 className="w-3 h-3" />
+                          <span>Edit Why/How</span>
                         </button>
-                        <ChevronRight className="w-5 h-5 text-zinc-500 shrink-0" />
                       </div>
+
+                      {isGuideExpanded && (
+                        <div className="mt-2.5 p-3 rounded-xl bg-zinc-950/90 border border-zinc-800 space-y-2.5 text-xs font-sans animate-in fade-in duration-150">
+                          <div>
+                            <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold block mb-0.5">
+                              Why do this workout (Benefits):
+                            </span>
+                            <p className="text-zinc-300 text-xs leading-relaxed">
+                              {ex.benefits || guide.instructions || "Target compound hypertrophy, mechanical tension, and neurological strength adaptation."}
+                            </p>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400 font-bold block mb-0.5">
+                              How to do it (Execution Instructions):
+                            </span>
+                            {ex.instructions && ex.instructions.length > 0 ? (
+                              <ol className="list-decimal list-inside space-y-1 text-zinc-300 text-xs font-mono">
+                                {ex.instructions.map((step, sIdx) => (
+                                  <li key={sIdx} className="leading-snug">{step}</li>
+                                ))}
+                              </ol>
+                            ) : guide.coachingCues && guide.coachingCues.length > 0 ? (
+                              <ul className="list-disc list-inside space-y-1 text-zinc-300 text-xs font-mono">
+                                {guide.coachingCues.map((cue, cIdx) => (
+                                  <li key={cIdx} className="leading-snug">{cue}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-zinc-500 italic text-xs">
+                                Tap "Edit Why/How" to add step-by-step instructions.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

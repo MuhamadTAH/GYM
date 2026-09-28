@@ -29,6 +29,11 @@ import {
   searchExerciseCatalogAction,
   planDailyCaloriesWithAIAction,
   updateTodayCalorieUsageAction,
+  getBodyMeasurementsAction,
+  saveBodyMeasurementsAction,
+  submitWorkoutDebriefAction,
+  updateExerciseBenefitsAndGuideAction,
+  getDailyNutritionReportAction,
 } from "@/app/actions";
 import type { WeeklySplitDay, MonthlyPhase } from "@/db/schema";
 
@@ -98,6 +103,13 @@ export function registerHandlers(server: Server) {
           name: "Daily Morning Workout & Nutrition Briefing",
           description:
             "Returns today's morning briefing: whether today is a scheduled training session (with prescribed movements, sets, rep ranges, cues) or active recovery, plus target calories, protein, hydration, and walk duration.",
+          mimeType: "application/json",
+        },
+        {
+          uri: "gym://body/measurements",
+          name: "Athlete Body Weight & Circumference Measurements",
+          description:
+            "Returns the athlete's latest scale weight, current body circumference sizes (arms, legs, waist, chest, etc.), target goal sizes, and measurement history.",
           mimeType: "application/json",
         },
       ],
@@ -228,6 +240,19 @@ export function registerHandlers(server: Server) {
               uri,
               mimeType: "application/json",
               text: JSON.stringify(sets, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "gym://body/measurements": {
+        const data = await getBodyMeasurementsAction();
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(data, null, 2),
             },
           ],
         };
@@ -630,6 +655,90 @@ export function registerHandlers(server: Server) {
             required: ["item_id"],
           },
         },
+        {
+          name: "update_body_measurements",
+          description:
+            "Record or update the athlete's current body weight, target goal weight, current body circumference sizes (arm, leg/thigh, waist, chest, hip, calf, shoulder, neck), and target goal sizes.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              weight: { type: "number", description: "Current scale body weight." },
+              weight_goal: { type: "number", description: "Target goal body weight." },
+              weight_unit: { type: "string", enum: ["kg", "lb"], description: "Unit of weight (default: kg)." },
+              size_unit: { type: "string", enum: ["cm", "in"], description: "Unit of size circumference (default: cm)." },
+              arm_size: { type: "number", description: "Current arm/biceps circumference size." },
+              arm_size_goal: { type: "number", description: "Target arm/biceps circumference size goal." },
+              leg_size: { type: "number", description: "Current leg/thigh circumference size." },
+              leg_size_goal: { type: "number", description: "Target leg/thigh circumference size goal." },
+              waist_size: { type: "number", description: "Current waist circumference size." },
+              waist_size_goal: { type: "number", description: "Target waist circumference size goal." },
+              chest_size: { type: "number", description: "Current chest circumference size." },
+              chest_size_goal: { type: "number", description: "Target chest circumference size goal." },
+              hip_size: { type: "number", description: "Current hip circumference size." },
+              hip_size_goal: { type: "number", description: "Target hip circumference size goal." },
+              calf_size: { type: "number", description: "Current calf circumference size." },
+              calf_size_goal: { type: "number", description: "Target calf circumference size goal." },
+              shoulder_size: { type: "number", description: "Current shoulder circumference size." },
+              shoulder_size_goal: { type: "number", description: "Target shoulder circumference size goal." },
+              neck_size: { type: "number", description: "Current neck circumference size." },
+              neck_size_goal: { type: "number", description: "Target neck circumference size goal." },
+              notes: { type: "string", description: "Optional measurement context notes." },
+              date: { type: "string", description: "Optional measurement calendar date (e.g. '2026-09-28', 'today')." },
+            },
+          },
+        },
+        {
+          name: "get_body_measurements",
+          description:
+            "Retrieve the athlete's latest scale weight, current body circumference sizes (arm, leg, waist, chest, etc.), target goal sizes, and measurement history log.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+          },
+        },
+        {
+          name: "submit_workout_debrief",
+          description:
+            "Submit an athlete's post-workout debrief reflection report ('how was my workout'), recording session rating (1-5 stars), effort RPE (1-10), energy level, muscle soreness, and free-form notes, returning AI coach commentary.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              athlete_rating: { type: "number", description: "Overall workout session rating from 1 to 5 stars." },
+              session_rpe: { type: "number", description: "Perceived session effort on 1 to 10 RPE scale." },
+              energy_level: { type: "string", enum: ["high", "moderate", "low", "drained"], description: "Athlete's energy level during workout." },
+              muscle_soreness: { type: "string", enum: ["none", "mild", "moderate", "severe"], description: "Muscle soreness or joint ache level." },
+              athlete_debrief: { type: "string", description: "Athlete's reflection notes on how the workout went." },
+              date: { type: "string", description: "Optional target workout date (e.g. '2026-09-28', 'today')." },
+            },
+            required: ["athlete_rating"],
+          },
+        },
+        {
+          name: "update_exercise_guide",
+          description:
+            "Update or write the custom Benefits ('why do this workout/exercise') and How-To execution instructions for an exercise in today's or a scheduled date's workout.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              exercise_index: { type: "number", description: "0-based index of the exercise in the workout." },
+              benefits: { type: "string", description: "Why do this exercise: target adaptations, hypertrophy, and strength role." },
+              instructions: { type: "string", description: "How to do it: step-by-step setup cues, form execution, and tips." },
+              date: { type: "string", description: "Optional target workout date (e.g. '2026-09-28', 'today')." },
+            },
+            required: ["exercise_index"],
+          },
+        },
+        {
+          name: "get_daily_calorie_report",
+          description:
+            "Generate a complete daily nutrition and calorie report for today or a specific date, displaying total calories consumed, calories left/remaining, weekly and monthly projected calorie budgets, protein/water/walk metrics, and an itemized meal breakdown.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              date: { type: "string", description: "Optional target date (e.g. '2026-09-28', 'today'). If omitted, defaults to today." },
+            },
+          },
+        },
       ],
     };
   });
@@ -944,6 +1053,116 @@ export function registerHandlers(server: Server) {
           }
 
           const result = await deleteLoggedItemAction(itemId);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "update_body_measurements": {
+          const result = await saveBodyMeasurementsAction({
+            weight: args?.weight !== undefined ? Number(args.weight) : undefined,
+            weightGoal: args?.weight_goal !== undefined ? Number(args.weight_goal) : undefined,
+            weightUnit: args?.weight_unit as any,
+            sizeUnit: args?.size_unit as any,
+            armSize: args?.arm_size !== undefined ? Number(args.arm_size) : undefined,
+            armSizeGoal: args?.arm_size_goal !== undefined ? Number(args.arm_size_goal) : undefined,
+            legSize: args?.leg_size !== undefined ? Number(args.leg_size) : undefined,
+            legSizeGoal: args?.leg_size_goal !== undefined ? Number(args.leg_size_goal) : undefined,
+            waistSize: args?.waist_size !== undefined ? Number(args.waist_size) : undefined,
+            waistSizeGoal: args?.waist_size_goal !== undefined ? Number(args.waist_size_goal) : undefined,
+            chestSize: args?.chest_size !== undefined ? Number(args.chest_size) : undefined,
+            chestSizeGoal: args?.chest_size_goal !== undefined ? Number(args.chest_size_goal) : undefined,
+            hipSize: args?.hip_size !== undefined ? Number(args.hip_size) : undefined,
+            hipSizeGoal: args?.hip_size_goal !== undefined ? Number(args.hip_size_goal) : undefined,
+            calfSize: args?.calf_size !== undefined ? Number(args.calf_size) : undefined,
+            calfSizeGoal: args?.calf_size_goal !== undefined ? Number(args.calf_size_goal) : undefined,
+            shoulderSize: args?.shoulder_size !== undefined ? Number(args.shoulder_size) : undefined,
+            shoulderSizeGoal: args?.shoulder_size_goal !== undefined ? Number(args.shoulder_size_goal) : undefined,
+            neckSize: args?.neck_size !== undefined ? Number(args.neck_size) : undefined,
+            neckSizeGoal: args?.neck_size_goal !== undefined ? Number(args.neck_size_goal) : undefined,
+            notes: args?.notes !== undefined ? String(args.notes) : undefined,
+            date: args?.date !== undefined ? String(args.date) : undefined,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_body_measurements": {
+          const result = await getBodyMeasurementsAction();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "submit_workout_debrief": {
+          const rating = args?.athlete_rating !== undefined ? Number(args.athlete_rating) : undefined;
+          if (rating === undefined || isNaN(rating)) {
+            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'athlete_rating' (1-5).");
+          }
+
+          const result = await submitWorkoutDebriefAction({
+            athleteRating: rating,
+            sessionRpe: args?.session_rpe !== undefined ? Number(args.session_rpe) : undefined,
+            energyLevel: args?.energy_level as any,
+            muscleSoreness: args?.muscle_soreness as any,
+            athleteDebrief: args?.athlete_debrief !== undefined ? String(args.athlete_debrief) : undefined,
+            date: args?.date !== undefined ? String(args.date) : undefined,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "update_exercise_guide": {
+          const exerciseIndex = args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
+          if (exerciseIndex === undefined || isNaN(exerciseIndex)) {
+            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+          }
+
+          const result = await updateExerciseBenefitsAndGuideAction({
+            exerciseIndex,
+            benefits: args?.benefits !== undefined ? String(args.benefits) : undefined,
+            instructions: args?.instructions !== undefined ? String(args.instructions) : undefined,
+            date: args?.date !== undefined ? String(args.date) : undefined,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "get_daily_calorie_report": {
+          const targetDate = args?.date !== undefined ? String(args.date) : undefined;
+          const result = await getDailyNutritionReportAction(targetDate);
 
           return {
             content: [

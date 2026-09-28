@@ -1,19 +1,21 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Flame, Dumbbell, BarChart3, User, Bot, Target } from "lucide-react";
+import { Flame, Dumbbell, BarChart3, User, Bot, Target, Scale } from "lucide-react";
 import { CaloriesDashboard } from "@/components/calories-dashboard";
 import { ShorthandLogger } from "@/components/shorthand-logger";
 import { GoalsDashboard } from "@/components/goals-dashboard";
 import { CommandCenter } from "@/components/command-center";
 import { CoachDashboard } from "@/components/coach-dashboard";
 import { ProfileModal } from "@/components/profile-modal";
+import { BodyMeasurementsModal } from "@/components/body-measurements-modal";
 import { ActiveDayBriefing } from "@/components/active-day-briefing";
 import { getUserProfileAction } from "@/app/actions";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"cal" | "workout" | "goals" | "command_center" | "coach">("cal");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isBodyMeasurementsOpen, setIsBodyMeasurementsOpen] = useState(false);
   const [userName, setUserName] = useState("Athlete");
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -50,6 +52,13 @@ export default function Home() {
         onSaved={handleProfileSaved}
       />
 
+      {/* Body Weight & Circumference Sizes Modal */}
+      <BodyMeasurementsModal
+        isOpen={isBodyMeasurementsOpen}
+        onClose={() => setIsBodyMeasurementsOpen(false)}
+        onUpdated={handleProfileSaved}
+      />
+
       {/* Top App Bar - Clean, unified gym design system */}
       <header className="w-full max-w-5xl sticky top-0 z-40 bg-black/90 backdrop-blur-md px-3 sm:px-6 py-2.5 border-b border-zinc-800 flex items-center justify-between gap-3">
         {/* Brand */}
@@ -83,16 +92,29 @@ export default function Home() {
           })}
         </nav>
 
-        {/* Profile Button */}
-        <button
-          type="button"
-          onClick={() => setIsProfileOpen(true)}
-          className="text-xs font-mono px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer shrink-0"
-          title="Profile & Baseline 1RMs"
-        >
-          <User className="w-3.5 h-3.5 text-amber-400" />
-          <span className="hidden sm:inline font-semibold">{userName}</span>
-        </button>
+        {/* Action Controls */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsBodyMeasurementsOpen(true)}
+            className="text-xs font-mono px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer"
+            title="Body Weight & Circumference Sizes (Arm, Leg, Waist)"
+          >
+            <Scale className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline font-semibold">Body & Sizes</span>
+          </button>
+
+          {/* Profile Button */}
+          <button
+            type="button"
+            onClick={() => setIsProfileOpen(true)}
+            className="text-xs font-mono px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 flex items-center gap-1.5 transition cursor-pointer"
+            title="Profile & Baseline 1RMs"
+          >
+            <User className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline font-semibold">{userName}</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Tab Content View */}

@@ -172,6 +172,36 @@ CREATE TABLE IF NOT EXISTS daily_nutrition_logs (
 	updated_at text NOT NULL,
 	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
 );
+
+CREATE TABLE IF NOT EXISTS body_measurements (
+	id text PRIMARY KEY NOT NULL,
+	user_id text NOT NULL,
+	date text NOT NULL,
+	weight real,
+	weight_goal real,
+	weight_unit text DEFAULT 'kg',
+	size_unit text DEFAULT 'cm',
+	arm_size real,
+	leg_size real,
+	waist_size real,
+	chest_size real,
+	hip_size real,
+	calf_size real,
+	shoulder_size real,
+	neck_size real,
+	arm_size_goal real,
+	leg_size_goal real,
+	waist_size_goal real,
+	chest_size_goal real,
+	hip_size_goal real,
+	calf_size_goal real,
+	shoulder_size_goal real,
+	neck_size_goal real,
+	notes text,
+	created_at text NOT NULL,
+	updated_at text NOT NULL,
+	FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON UPDATE no action ON DELETE cascade
+);
 `;
 
 const columnMigrations = [
@@ -188,6 +218,13 @@ const columnMigrations = [
   "ALTER TABLE athlete_daily_goals ADD COLUMN monthly_phases text;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN today_logged_items text;",
   "ALTER TABLE athlete_daily_goals ADD COLUMN last_active_date text;",
+  "ALTER TABLE workout_sessions ADD COLUMN athlete_rating integer;",
+  "ALTER TABLE workout_sessions ADD COLUMN session_rpe real;",
+  "ALTER TABLE workout_sessions ADD COLUMN energy_level text;",
+  "ALTER TABLE workout_sessions ADD COLUMN muscle_soreness text;",
+  "ALTER TABLE workout_sessions ADD COLUMN athlete_debrief text;",
+  "ALTER TABLE workout_sessions ADD COLUMN coach_feedback text;",
+  "ALTER TABLE workout_sessions ADD COLUMN debrief_completed_at text;",
 ];
 
 // Run SQLite in WAL mode with a busy timeout and ensure schema tables exist

@@ -8,6 +8,8 @@ import {
   coachMessages,
   athleteDailyGoals,
   dailyNutritionLogs,
+  bodyMeasurements,
+  type BodyMeasurementRow,
   type AthleteDailyGoalsRow,
   type DailyNutritionLogRow,
   type WeeklySplitDay,
@@ -452,6 +454,13 @@ export interface TodaysWorkoutView {
   dayIndex: number;
   scheduledDate?: string;
   nextSession?: NextSessionView;
+  athleteRating?: number | null;
+  sessionRpe?: number | null;
+  energyLevel?: string | null;
+  muscleSoreness?: string | null;
+  athleteDebrief?: string | null;
+  coachFeedback?: string | null;
+  debriefCompletedAt?: string | null;
 }
 
 /**
@@ -724,6 +733,13 @@ export async function getTodaysWorkoutAction(targetDate?: string): Promise<Today
     dayIndex: calendarDayIndex,
     scheduledDate: dateStr,
     nextSession,
+    athleteRating: currentSession.athleteRating,
+    sessionRpe: currentSession.sessionRpe,
+    energyLevel: currentSession.energyLevel,
+    muscleSoreness: currentSession.muscleSoreness,
+    athleteDebrief: currentSession.athleteDebrief,
+    coachFeedback: currentSession.coachFeedback,
+    debriefCompletedAt: currentSession.debriefCompletedAt,
   };
 }
 
@@ -3652,6 +3668,533 @@ export async function updateTodayCalorieUsageAction(input: {
     success: true,
     message: `Updated today's calories to ${newCalories} kcal.`,
     goals: updatedGoals,
+  };
+}
+
+// ============================================================================
+// BODY WEIGHT & CIRCUMFERENCE MEASUREMENTS (CURRENT VS GOAL)
+// ============================================================================
+
+export type { BodyMeasurementRow };
+export type BodyMeasurementEntry = BodyMeasurementRow;
+
+export interface BodyMeasurementsView {
+  latest: BodyMeasurementRow | null;
+  goals: {
+    weightGoal?: number | null;
+    armSizeGoal?: number | null;
+    legSizeGoal?: number | null;
+    waistSizeGoal?: number | null;
+    chestSizeGoal?: number | null;
+    hipSizeGoal?: number | null;
+    calfSizeGoal?: number | null;
+    shoulderSizeGoal?: number | null;
+    neckSizeGoal?: number | null;
+    sizeUnit: "cm" | "in";
+    weightUnit: "kg" | "lb";
+  };
+  history: BodyMeasurementRow[];
+}
+
+/**
+ * Server Action: Fetches the athlete's latest body measurements, current vs goal sizes, and recent history.
+ */
+export async function getBodyMeasurementsAction(): Promise<BodyMeasurementsView> {
+  const users = await db.select().from(userProfiles).limit(1);
+  if (users.length === 0) {
+    return {
+      latest: null,
+      goals: { sizeUnit: "cm", weightUnit: "kg" },
+      history: [],
+    };
+  }
+  const user = users[0];
+
+  const history = await db
+    .select()
+    .from(bodyMeasurements)
+    .where(eq(bodyMeasurements.userId, user.id))
+    .orderBy(desc(bodyMeasurements.date))
+    .limit(30);
+
+  const latest = history[0] || null;
+
+  let weightGoal = latest?.weightGoal ?? null;
+  let armSizeGoal = latest?.armSizeGoal ?? null;
+  let legSizeGoal = latest?.legSizeGoal ?? null;
+  let waistSizeGoal = latest?.waistSizeGoal ?? null;
+  let chestSizeGoal = latest?.chestSizeGoal ?? null;
+  let hipSizeGoal = latest?.hipSizeGoal ?? null;
+  let calfSizeGoal = latest?.calfSizeGoal ?? null;
+  let shoulderSizeGoal = latest?.shoulderSizeGoal ?? null;
+  let neckSizeGoal = latest?.neckSizeGoal ?? null;
+
+  if (history.length > 1) {
+    for (const row of history) {
+      if (weightGoal === null && row.weightGoal !== null) weightGoal = row.weightGoal;
+      if (armSizeGoal === null && row.armSizeGoal !== null) armSizeGoal = row.armSizeGoal;
+      if (legSizeGoal === null && row.legSizeGoal !== null) legSizeGoal = row.legSizeGoal;
+      if (waistSizeGoal === null && row.waistSizeGoal !== null) waistSizeGoal = row.waistSizeGoal;
+      if (chestSizeGoal === null && row.chestSizeGoal !== null) chestSizeGoal = row.chestSizeGoal;
+      if (hipSizeGoal === null && row.hipSizeGoal !== null) hipSizeGoal = row.hipSizeGoal;
+      if (calfSizeGoal === null && row.calfSizeGoal !== null) calfSizeGoal = row.calfSizeGoal;
+      if (shoulderSizeGoal === null && row.shoulderSizeGoal !== null) shoulderSizeGoal = row.shoulderSizeGoal;
+      if (neckSizeGoal === null && row.neckSizeGoal !== null) neckSizeGoal = row.neckSizeGoal;
+    }
+  }
+
+  const defaultRow: BodyMeasurementRow = {
+    id: "current-profile",
+    userId: user.id,
+    date: new Date().toISOString().slice(0, 10),
+    weight: user.currentWeightValue,
+    weightGoal,
+    weightUnit: user.preferredUnit || "kg",
+    sizeUnit: "cm",
+    armSize: null,
+    legSize: null,
+    waistSize: null,
+    chestSize: null,
+    hipSize: null,
+    calfSize: null,
+    shoulderSize: null,
+    neckSize: null,
+    armSizeGoal,
+    legSizeGoal,
+    waistSizeGoal,
+    chestSizeGoal,
+    hipSizeGoal,
+    calfSizeGoal,
+    shoulderSizeGoal,
+    neckSizeGoal,
+    notes: null,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+
+  return {
+    latest: latest || defaultRow,
+    goals: {
+      weightGoal,
+      armSizeGoal,
+      legSizeGoal,
+      waistSizeGoal,
+      chestSizeGoal,
+      hipSizeGoal,
+      calfSizeGoal,
+      shoulderSizeGoal,
+      neckSizeGoal,
+      sizeUnit: (latest?.sizeUnit as "cm" | "in") || "cm",
+      weightUnit: (latest?.weightUnit as "kg" | "lb") || user.preferredUnit || "kg",
+    },
+    history,
+  };
+}
+
+/**
+ * Server Action: Records/updates body weight, circumference sizes (arms, legs, etc.), and goals.
+ */
+export async function saveBodyMeasurementsAction(payload: {
+  date?: string;
+  weight?: number;
+  weightGoal?: number;
+  weightUnit?: "kg" | "lb";
+  sizeUnit?: "cm" | "in";
+  armSize?: number;
+  armSizeGoal?: number;
+  legSize?: number;
+  legSizeGoal?: number;
+  waistSize?: number;
+  waistSizeGoal?: number;
+  chestSize?: number;
+  chestSizeGoal?: number;
+  hipSize?: number;
+  hipSizeGoal?: number;
+  calfSize?: number;
+  calfSizeGoal?: number;
+  shoulderSize?: number;
+  shoulderSizeGoal?: number;
+  neckSize?: number;
+  neckSizeGoal?: number;
+  notes?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  measurements?: BodyMeasurementRow | null;
+  data: BodyMeasurementsView;
+}> {
+  const users = await db.select().from(userProfiles).limit(1);
+  if (users.length === 0) {
+    throw new Error("User profile not found");
+  }
+  const user = users[0];
+  const targetDate = payload.date ? parseNaturalDate(payload.date) : new Date().toISOString().slice(0, 10);
+  const nowIso = new Date().toISOString();
+
+  const existing = await db
+    .select()
+    .from(bodyMeasurements)
+    .where(
+      and(
+        eq(bodyMeasurements.userId, user.id),
+        eq(bodyMeasurements.date, targetDate)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    const row = existing[0];
+    await db
+      .update(bodyMeasurements)
+      .set({
+        weight: payload.weight !== undefined ? payload.weight : row.weight,
+        weightGoal: payload.weightGoal !== undefined ? payload.weightGoal : row.weightGoal,
+        weightUnit: payload.weightUnit || row.weightUnit,
+        sizeUnit: payload.sizeUnit || row.sizeUnit,
+        armSize: payload.armSize !== undefined ? payload.armSize : row.armSize,
+        armSizeGoal: payload.armSizeGoal !== undefined ? payload.armSizeGoal : row.armSizeGoal,
+        legSize: payload.legSize !== undefined ? payload.legSize : row.legSize,
+        legSizeGoal: payload.legSizeGoal !== undefined ? payload.legSizeGoal : row.legSizeGoal,
+        waistSize: payload.waistSize !== undefined ? payload.waistSize : row.waistSize,
+        waistSizeGoal: payload.waistSizeGoal !== undefined ? payload.waistSizeGoal : row.waistSizeGoal,
+        chestSize: payload.chestSize !== undefined ? payload.chestSize : row.chestSize,
+        chestSizeGoal: payload.chestSizeGoal !== undefined ? payload.chestSizeGoal : row.chestSizeGoal,
+        hipSize: payload.hipSize !== undefined ? payload.hipSize : row.hipSize,
+        hipSizeGoal: payload.hipSizeGoal !== undefined ? payload.hipSizeGoal : row.hipSizeGoal,
+        calfSize: payload.calfSize !== undefined ? payload.calfSize : row.calfSize,
+        calfSizeGoal: payload.calfSizeGoal !== undefined ? payload.calfSizeGoal : row.calfSizeGoal,
+        shoulderSize: payload.shoulderSize !== undefined ? payload.shoulderSize : row.shoulderSize,
+        shoulderSizeGoal: payload.shoulderSizeGoal !== undefined ? payload.shoulderSizeGoal : row.shoulderSizeGoal,
+        neckSize: payload.neckSize !== undefined ? payload.neckSize : row.neckSize,
+        neckSizeGoal: payload.neckSizeGoal !== undefined ? payload.neckSizeGoal : row.neckSizeGoal,
+        notes: payload.notes !== undefined ? payload.notes : row.notes,
+        updatedAt: nowIso,
+      })
+      .where(eq(bodyMeasurements.id, row.id));
+  } else {
+    await db.insert(bodyMeasurements).values({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      date: targetDate,
+      weight: payload.weight,
+      weightGoal: payload.weightGoal,
+      weightUnit: payload.weightUnit || "kg",
+      sizeUnit: payload.sizeUnit || "cm",
+      armSize: payload.armSize,
+      armSizeGoal: payload.armSizeGoal,
+      legSize: payload.legSize,
+      legSizeGoal: payload.legSizeGoal,
+      waistSize: payload.waistSize,
+      waistSizeGoal: payload.waistSizeGoal,
+      chestSize: payload.chestSize,
+      chestSizeGoal: payload.chestSizeGoal,
+      hipSize: payload.hipSize,
+      hipSizeGoal: payload.hipSizeGoal,
+      calfSize: payload.calfSize,
+      calfSizeGoal: payload.calfSizeGoal,
+      shoulderSize: payload.shoulderSize,
+      shoulderSizeGoal: payload.shoulderSizeGoal,
+      neckSize: payload.neckSize,
+      neckSizeGoal: payload.neckSizeGoal,
+      notes: payload.notes,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  }
+
+  // Synchronize user profile current scale weight if provided
+  if (payload.weight && payload.weight > 0) {
+    await db
+      .update(userProfiles)
+      .set({
+        currentWeightValue: payload.weight,
+        currentWeightUnit: payload.weightUnit || user.preferredUnit || "kg",
+        updatedAt: nowIso,
+      })
+      .where(eq(userProfiles.id, user.id));
+  }
+
+  const updatedView = await getBodyMeasurementsAction();
+  return {
+    success: true,
+    message: `Recorded measurements for ${targetDate}.`,
+    measurements: updatedView.latest,
+    data: updatedView,
+  };
+}
+
+// ============================================================================
+// WORKOUT REFLECTION & DEBRIEF REPORT ("HOW WAS MY WORKOUT")
+// ============================================================================
+
+/**
+ * Server Action: Submits athlete post-workout debrief / reflection report,
+ * records session RPE, energy, and soreness, and generates AI coach feedback.
+ */
+export async function submitWorkoutDebriefAction(payload: {
+  sessionId?: string;
+  date?: string;
+  athleteRating: number; // 1 to 5
+  sessionRpe?: number; // 1 to 10
+  energyLevel?: "high" | "moderate" | "low" | "drained";
+  muscleSoreness?: "none" | "mild" | "moderate" | "severe";
+  athleteDebrief?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  athleteRating: number;
+  sessionRpe: number;
+  coachFeedback: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession(payload.date);
+  const targetSessionId = payload.sessionId || sessionData.sessionId;
+
+  const sessionRow = (
+    await db.select().from(workoutSessions).where(eq(workoutSessions.id, targetSessionId)).limit(1)
+  )[0];
+
+  if (!sessionRow) {
+    throw new Error("Workout session not found");
+  }
+
+  const rating = Math.min(5, Math.max(1, Math.round(payload.athleteRating || 5)));
+  const rpe = payload.sessionRpe !== undefined ? Math.min(10, Math.max(1, payload.sessionRpe)) : 8.0;
+  const energy = payload.energyLevel || "moderate";
+  const soreness = payload.muscleSoreness || "none";
+  const notes = payload.athleteDebrief || "";
+
+  // Intelligent AI Coach Feedback Commentary
+  let coachCommentary = "";
+  if (soreness === "severe" || (soreness === "moderate" && rpe >= 9)) {
+    coachCommentary = `Noted significant fatigue and ${soreness} soreness (RPE ${rpe}). Prioritizing sleep and hydration; autoregulating tomorrow's session down by 10-15% volume for optimal muscular recovery.`;
+  } else if (rating >= 4 && energy === "high") {
+    coachCommentary = `Outstanding session! Rated ${rating}/5 with high readiness (RPE ${rpe}). Progressive overload stimulus successfully achieved. Keep protein targets locked in.`;
+  } else if (energy === "low" || energy === "drained") {
+    coachCommentary = `Great discipline completing the session despite feeling ${energy}. Solid work holding form under fatigue. Focus on post-workout carbohydrates and 8+ hours rest tonight.`;
+  } else {
+    coachCommentary = `Workout logged with rating ${rating}/5 and RPE ${rpe}. Good consistency on progressive overload foundations.`;
+  }
+
+  if (notes) {
+    coachCommentary += ` Athlete note noted: "${notes.slice(0, 100)}"`;
+  }
+
+  const nowIso = new Date().toISOString();
+
+  await db
+    .update(workoutSessions)
+    .set({
+      athleteRating: rating,
+      sessionRpe: rpe,
+      energyLevel: energy,
+      muscleSoreness: soreness,
+      athleteDebrief: notes,
+      coachFeedback: coachCommentary,
+      status: "completed",
+      endedAt: nowIso,
+      debriefCompletedAt: nowIso,
+    })
+    .where(eq(workoutSessions.id, targetSessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+
+  return {
+    success: true,
+    message: `Workout report submitted! Rating: ${rating}/5.`,
+    athleteRating: rating,
+    sessionRpe: rpe,
+    coachFeedback: coachCommentary,
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Updates the customized Benefits and How-To execution instructions for an exercise.
+ */
+export async function updateExerciseBenefitsAndGuideAction(payload: {
+  exerciseIndex: number;
+  date?: string;
+  benefits?: string;
+  instructions?: string[] | string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession(payload.date);
+  const sessionRow = (
+    await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
+  )[0];
+
+  let exercises: PlannedExercise[] = [];
+  if (sessionRow?.sessionNotes) {
+    try {
+      exercises = JSON.parse(sessionRow.sessionNotes);
+    } catch {
+      exercises = [];
+    }
+  }
+
+  if (payload.exerciseIndex < 0 || payload.exerciseIndex >= exercises.length) {
+    const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+    return {
+      success: false,
+      message: "Exercise index out of range.",
+      todaysWorkout,
+    };
+  }
+
+  const target = exercises[payload.exerciseIndex];
+  if (payload.benefits !== undefined) {
+    target.benefits = payload.benefits;
+  }
+  if (payload.instructions !== undefined) {
+    if (Array.isArray(payload.instructions)) {
+      target.instructions = payload.instructions;
+    } else if (typeof payload.instructions === "string") {
+      const splitSteps = payload.instructions
+        .split(/(?:\r?\n|\s*\d+\.\s+)/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      target.instructions = splitSteps.length > 0 ? splitSteps : [payload.instructions];
+    }
+  }
+
+  exercises[payload.exerciseIndex] = target;
+
+  await db
+    .update(workoutSessions)
+    .set({ sessionNotes: JSON.stringify(exercises) })
+    .where(eq(workoutSessions.id, sessionData.sessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+  return {
+    success: true,
+    message: `Updated benefits & guide for "${target.exerciseName}".`,
+    todaysWorkout,
+  };
+}
+
+// ============================================================================
+// DAILY NUTRITION & CALORIE REPORT (USED, LEFT, WEEKLY/MONTHLY TOTALS)
+// ============================================================================
+
+export interface DailyNutritionReport {
+  date: string;
+  caloriesTarget: number;
+  dailyCalorieTarget?: number;
+  weeklyCaloriesTarget: number;
+  weeklyCalorieBudget?: number;
+  monthlyCaloriesTarget: number;
+  monthlyCalorieBudget?: number;
+  caloriesConsumed: number;
+  caloriesUsed?: number;
+  caloriesRemaining: number;
+  proteinGrams: number;
+  proteinTarget: number;
+  waterLiters: number;
+  waterTarget: number;
+  walkMinutes: number;
+  trainingCompleted: boolean;
+  items: LoggedItem[];
+  loggedItems?: LoggedItem[];
+  summaryReport: string;
+}
+
+/**
+ * Server Action: Generates a complete daily calorie and intake report,
+ * comparing calories used vs left, projecting weekly and monthly targets,
+ * and listing all meals eaten that day.
+ */
+export async function getDailyNutritionReportAction(
+  targetDate?: string
+): Promise<DailyNutritionReport> {
+  const users = await db.select().from(userProfiles).limit(1);
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const dateStr = targetDate ? parseNaturalDate(targetDate) : todayStr;
+  const isTargetToday = dateStr === todayStr;
+
+  const goals = await getDailyGoalsAction(dateStr);
+  const calTarget = goals.caloriesTarget || 2000;
+  const weeklyTarget = calTarget * 7;
+  const monthlyTarget = calTarget * 30;
+
+  let consumed = 0;
+  let protein = 0;
+  let water = 0;
+  let walk = 0;
+  let trained = false;
+  let items: LoggedItem[] = [];
+
+  if (isTargetToday) {
+    consumed = goals.todayCalories;
+    protein = goals.todayProtein;
+    water = goals.todayWaterLiters;
+    walk = goals.todayWalkMinutes;
+    trained = goals.todayTrainingCompleted;
+    items = goals.todayLoggedItems || [];
+  } else {
+    if (users.length > 0) {
+      const past = await db
+        .select()
+        .from(dailyNutritionLogs)
+        .where(
+          and(
+            eq(dailyNutritionLogs.userId, users[0].id),
+            eq(dailyNutritionLogs.date, dateStr)
+          )
+        )
+        .limit(1);
+
+      if (past.length > 0) {
+        consumed = past[0].calories;
+        protein = past[0].protein;
+        water = past[0].waterLiters;
+        walk = past[0].walkMinutes;
+        trained = past[0].trainingCompleted;
+        items = past[0].loggedItems || [];
+      }
+    }
+  }
+
+  const remaining = Math.max(0, calTarget - consumed);
+
+  let summary = `Nutrition Report for ${dateStr}:\n`;
+  summary += `• Daily Calorie Goal: ${calTarget} kcal (Weekly Budget: ${weeklyTarget} kcal, Monthly Budget: ${monthlyTarget} kcal)\n`;
+  summary += `• Calories Consumed: ${consumed} kcal | Calories Remaining: ${remaining} kcal\n`;
+  summary += `• Protein Intake: ${protein}g / ${goals.proteinMinGrams || 150}g target\n`;
+  summary += `• Water: ${water}L | Walk: ${walk} mins | Training Done: ${trained ? "Yes" : "No"}\n`;
+  summary += `• Items Logged (${items.length}):\n`;
+  if (items.length === 0) {
+    summary += "  (No food or activities logged yet)\n";
+  } else {
+    items.forEach((it, i) => {
+      summary += `  ${i + 1}. ${it.name} - ${it.calories} kcal (${it.protein || 0}g P) [${it.category}]\n`;
+    });
+  }
+
+  return {
+    date: dateStr,
+    caloriesTarget: calTarget,
+    dailyCalorieTarget: calTarget,
+    weeklyCaloriesTarget: weeklyTarget,
+    weeklyCalorieBudget: weeklyTarget,
+    monthlyCaloriesTarget: monthlyTarget,
+    monthlyCalorieBudget: monthlyTarget,
+    caloriesConsumed: consumed,
+    caloriesUsed: consumed,
+    caloriesRemaining: remaining,
+    proteinGrams: protein,
+    proteinTarget: goals.proteinMinGrams || 150,
+    waterLiters: water,
+    waterTarget: goals.waterMinLiters || 3.0,
+    walkMinutes: walk,
+    trainingCompleted: trained,
+    items,
+    loggedItems: items,
+    summaryReport: summary,
   };
 }
 

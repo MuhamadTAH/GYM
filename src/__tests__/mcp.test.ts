@@ -29,9 +29,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     await client.close();
   });
 
-  it("lists all 6 read-only resources with exact URIs", async () => {
+  it("lists all 7 read-only resources with exact URIs", async () => {
     const res = await client.listResources();
-    expect(res.resources).toHaveLength(6);
+    expect(res.resources).toHaveLength(7);
 
     const uris = res.resources.map((r) => r.uri);
     expect(uris).toContain("gym://profile");
@@ -40,6 +40,7 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(uris).toContain("gym://history/recent");
     expect(uris).toContain("gym://mesocycle/summary");
     expect(uris).toContain("gym://briefing/today");
+    expect(uris).toContain("gym://body/measurements");
   });
 
   it("reads gym://profile resource correctly", async () => {
@@ -109,9 +110,9 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 14 streamlined action & state mutation tools", async () => {
+  it("lists all 19 streamlined action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(14);
+    expect(res.tools).toHaveLength(19);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("get_active_workout");
@@ -128,6 +129,11 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(toolNames).toContain("update_today_calorie_usage");
     expect(toolNames).toContain("log_natural_entry");
     expect(toolNames).toContain("delete_logged_entry");
+    expect(toolNames).toContain("update_body_measurements");
+    expect(toolNames).toContain("get_body_measurements");
+    expect(toolNames).toContain("submit_workout_debrief");
+    expect(toolNames).toContain("update_exercise_guide");
+    expect(toolNames).toContain("get_daily_calorie_report");
   });
 
   it("calls update_daily_goals and get_daily_goals tools with weekly and monthly parameters", async () => {
@@ -378,5 +384,99 @@ describe("Native Model Context Protocol (MCP) Server", () => {
       },
     });
     expect(delRes.isError).toBeFalsy();
+  });
+
+  it("calls update_body_measurements and get_body_measurements tools", async () => {
+    const updateRes = await client.callTool({
+      name: "update_body_measurements",
+      arguments: {
+        weight: 82.5,
+        weight_goal: 78.0,
+        weight_unit: "kg",
+        arm_size: 38.5,
+        arm_size_goal: 41.0,
+        leg_size: 58.0,
+        leg_size_goal: 62.0,
+        waist_size: 86.0,
+        waist_size_goal: 80.0,
+        notes: "Morning weigh-in after fasted cardio",
+      },
+    });
+
+    expect(updateRes.isError).toBeFalsy();
+    const updatePayload = JSON.parse(((updateRes as any).content[0] as { text: string }).text);
+    expect(updatePayload.success).toBe(true);
+    expect(updatePayload.measurements.weight).toBe(82.5);
+    expect(updatePayload.measurements.weightGoal).toBe(78.0);
+    expect(updatePayload.measurements.armSize).toBe(38.5);
+    expect(updatePayload.measurements.armSizeGoal).toBe(41.0);
+    expect(updatePayload.measurements.legSize).toBe(58.0);
+    expect(updatePayload.measurements.legSizeGoal).toBe(62.0);
+
+    const getRes = await client.callTool({
+      name: "get_body_measurements",
+      arguments: {},
+    });
+    expect(getRes.isError).toBeFalsy();
+    const getPayload = JSON.parse(((getRes as any).content[0] as { text: string }).text);
+    expect(getPayload.latest).toBeDefined();
+    expect(getPayload.latest.weight).toBe(82.5);
+    expect(getPayload.latest.armSize).toBe(38.5);
+    expect(getPayload.latest.armSizeGoal).toBe(41.0);
+    expect(getPayload.history.length).toBeGreaterThan(0);
+  });
+
+  it("calls submit_workout_debrief tool and returns coach feedback", async () => {
+    const debriefRes = await client.callTool({
+      name: "submit_workout_debrief",
+      arguments: {
+        athlete_rating: 5,
+        session_rpe: 8,
+        energy_level: "high",
+        muscle_soreness: "mild",
+        athlete_debrief: "Chest felt phenomenal, barbell bench was smooth with great shoulder stability.",
+      },
+    });
+
+    expect(debriefRes.isError).toBeFalsy();
+    const debriefPayload = JSON.parse(((debriefRes as any).content[0] as { text: string }).text);
+    expect(debriefPayload.success).toBe(true);
+    expect(debriefPayload.athleteRating).toBe(5);
+    expect(debriefPayload.coachFeedback).toBeDefined();
+    expect(debriefPayload.coachFeedback.length).toBeGreaterThan(10);
+  });
+
+  it("calls update_exercise_guide tool to set benefits and instructions", async () => {
+    const guideRes = await client.callTool({
+      name: "update_exercise_guide",
+      arguments: {
+        exercise_index: 0,
+        benefits: "Builds anterior deltoid and clavicular head of the pectoralis major.",
+        instructions: "1. Retract scapula. 2. Lower under control for 2 seconds. 3. Explode upwards.",
+      },
+    });
+
+    expect(guideRes.isError).toBeFalsy();
+    const guidePayload = JSON.parse(((guideRes as any).content[0] as { text: string }).text);
+    expect(guidePayload.success).toBe(true);
+    expect(guidePayload.todaysWorkout.exercises[0].benefits).toContain("anterior deltoid");
+    expect(guidePayload.todaysWorkout.exercises[0].instructions).toHaveLength(3);
+  });
+
+  it("calls get_daily_calorie_report tool to retrieve full macro and item breakdown", async () => {
+    const reportRes = await client.callTool({
+      name: "get_daily_calorie_report",
+      arguments: {},
+    });
+
+    expect(reportRes.isError).toBeFalsy();
+    const reportPayload = JSON.parse(((reportRes as any).content[0] as { text: string }).text);
+    expect(reportPayload.date).toBeDefined();
+    expect(reportPayload.dailyCalorieTarget).toBeGreaterThan(0);
+    expect(reportPayload.weeklyCalorieBudget).toBe(reportPayload.dailyCalorieTarget * 7);
+    expect(reportPayload.monthlyCalorieBudget).toBe(reportPayload.dailyCalorieTarget * 30);
+    expect(reportPayload.caloriesUsed).toBeDefined();
+    expect(reportPayload.caloriesRemaining).toBeDefined();
+    expect(Array.isArray(reportPayload.loggedItems)).toBe(true);
   });
 });

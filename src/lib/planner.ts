@@ -30,6 +30,8 @@ export interface PlannedExercise {
   targetRpe: number;
   restSeconds: number;
   notes?: string;
+  benefits?: string;
+  instructions?: string[];
 }
 
 export interface PlannedWorkoutSession {

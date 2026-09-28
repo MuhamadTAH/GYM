@@ -23,6 +23,7 @@ import {
   History,
   FastForward,
   Loader2,
+  FileText,
 } from "lucide-react";
 import {
   getDailyGoalsAction,
@@ -50,6 +51,7 @@ import { type ActivityLevel } from "@/lib/nutrition";
 import { FOOD_DATABASE, type EstimatedMacroResult } from "@/lib/food-parser";
 import type { LoggedItem } from "@/db/schema";
 import { MealScanModal } from "./meal-scan-modal";
+import { DailyCalorieReportModal } from "./daily-calorie-report-modal";
 
 export function CaloriesDashboard() {
   const [goals, setGoals] = useState<DailyGoalsData | null>(null);
@@ -65,6 +67,7 @@ export function CaloriesDashboard() {
 
   // Modals state
   const [isMealScanModalOpen, setIsMealScanModalOpen] = useState(false);
+  const [isDailyReportModalOpen, setIsDailyReportModalOpen] = useState(false);
   const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
   const [targetCaloriesInput, setTargetCaloriesInput] = useState("");
   const [targetProteinInput, setTargetProteinInput] = useState("");
@@ -592,6 +595,13 @@ export function CaloriesDashboard() {
         }}
       />
 
+      {/* Itemized Daily Intake & Multi-Tier Calorie Report Modal */}
+      <DailyCalorieReportModal
+        isOpen={isDailyReportModalOpen}
+        onClose={() => setIsDailyReportModalOpen(false)}
+        targetDate={goals?.lastActiveDate || getClientLocalDate()}
+      />
+
       {/* Target Setting Modal */}
       {isTargetModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1106,6 +1116,15 @@ export function CaloriesDashboard() {
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
+              onClick={() => setIsDailyReportModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/60 text-xs font-mono flex items-center gap-1 transition cursor-pointer shadow-sm"
+              title="View itemized daily food report, what you got today, and multi-tier budget"
+            >
+              <FileText className="w-3 h-3 text-amber-400" />
+              <span>Daily Report</span>
+            </button>
+            <button
+              type="button"
               onClick={handleSimulateNewDay}
               disabled={isPending || isSimulatingDay}
               className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 text-xs font-mono flex items-center gap-1 transition cursor-pointer"
@@ -1220,6 +1239,28 @@ export function CaloriesDashboard() {
                 style={{ width: `${Math.min(100, (proteinEaten / proteinTarget) * 100)}%` }}
               />
             </div>
+          </div>
+        </div>
+
+        {/* Multi-Tier Calorie Planning Projections (Daily -> Weekly -> Monthly) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-zinc-850/80 text-xs font-mono">
+          <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="text-[10px] text-zinc-500 uppercase block">Daily Goal</span>
+            <span className="text-sm font-bold text-white">{caloriesTarget.toLocaleString()} kcal</span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="text-[10px] text-zinc-500 uppercase block">Weekly Budget (7d)</span>
+            <span className="text-sm font-bold text-indigo-300">{(caloriesTarget * 7).toLocaleString()} kcal</span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="text-[10px] text-zinc-500 uppercase block">Monthly Budget (30d)</span>
+            <span className="text-sm font-bold text-amber-300">{(caloriesTarget * 30).toLocaleString()} kcal</span>
+          </div>
+          <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+            <span className="text-[10px] text-zinc-500 uppercase block">Calories Left</span>
+            <span className={`text-sm font-bold ${caloriesRemaining >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {caloriesRemaining >= 0 ? `${caloriesRemaining.toLocaleString()} kcal` : `0 kcal (${Math.abs(caloriesRemaining)} over)`}
+            </span>
           </div>
         </div>
       </section>
