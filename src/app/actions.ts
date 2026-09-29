@@ -3317,6 +3317,19 @@ function findExerciseIndexInList(
   return -1;
 }
 
+export interface WorkoutExerciseInput {
+  exerciseName: string;
+  targetSets?: number;
+  targetReps?: number;
+  targetLoad?: number;
+  loadUnit?: PreferredUnit;
+  targetRpe?: number;
+  restSeconds?: number;
+  notes?: string;
+  benefits?: string;
+  instructions?: string[] | string;
+}
+
 export interface UpdateWorkoutExercisePayload {
   exerciseIndex?: number;
   exerciseNumber?: number; // 1-based index (1 to N)
@@ -3334,11 +3347,227 @@ export interface UpdateWorkoutExercisePayload {
   benefits?: string;
   instructions?: string[] | string;
   date?: string;
+  updates?: UpdateWorkoutExercisePayload[];
+}
+
+/**
+ * Server Action: Sets or replaces the entire workout routine for today or a specific date in one call.
+ * Accepts session name, session type, and the full list of exercises.
+ */
+export async function setWorkoutRoutineAction(payload: {
+  sessionName?: string;
+  sessionType?: string;
+  exercises: WorkoutExerciseInput[];
+  date?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession(payload.date);
+  const preferredUnit = sessionData.preferredUnit || "kg";
+  const dateLabel = payload.date ? `workout for ${payload.date}` : "today's workout";
+
+  const plannedExercises: PlannedExercise[] = (payload.exercises || []).map((input) => {
+    const rawName = input.exerciseName || "Custom Exercise";
+    const resolved = resolveExerciseName(rawName);
+    const unit = input.loadUnit || preferredUnit;
+
+    let instructions: string[] | undefined;
+    if (input.instructions !== undefined) {
+      if (Array.isArray(input.instructions)) {
+        instructions = input.instructions;
+      } else if (typeof input.instructions === "string") {
+        instructions = input.instructions
+          .split(/(?:\r?\n|\s*\d+\.\s+)/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    } else if (resolved.catalogExercise?.instructions) {
+      instructions = resolved.catalogExercise.instructions;
+    }
+
+    return {
+      exerciseName: resolved.standardizedName,
+      movementPattern: resolved.movementPattern,
+      targetLoad:
+        input.targetLoad !== undefined
+          ? Math.max(0, input.targetLoad)
+          : unit === "lb"
+          ? 45
+          : 20,
+      loadUnit: unit,
+      targetSets: Math.max(1, input.targetSets || 3),
+      targetReps: Math.max(1, input.targetReps || 10),
+      targetRpe:
+        input.targetRpe !== undefined
+          ? Math.min(10, Math.max(1, input.targetRpe))
+          : 8.0,
+      restSeconds: Math.max(15, input.restSeconds || 60),
+      notes: input.notes,
+      benefits: input.benefits,
+      instructions,
+    };
+  });
+
+  const sessionName = payload.sessionName || "Custom Workout Routine";
+  const sessionType = payload.sessionType || "custom";
+
+  await db
+    .update(workoutSessions)
+    .set({
+      sessionName,
+      sessionType,
+      sessionNotes: JSON.stringify(plannedExercises),
+      status: "in_progress",
+    })
+    .where(eq(workoutSessions.id, sessionData.sessionId));
+
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+  return {
+    success: true,
+    message: `Set "${sessionName}" with ${plannedExercises.length} exercises for ${dateLabel}.`,
+    todaysWorkout,
+  };
+}
+
+/**
+ * Server Action: Updates or replaces multiple exercises in a workout routine in a single batch call.
+ */
+export async function batchUpdateWorkoutExercisesAction(payload: {
+  updates: UpdateWorkoutExercisePayload[];
+  date?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  updatedCount: number;
+  todaysWorkout: TodaysWorkoutView;
+}> {
+  const sessionData = await getOrCreateActiveSession(payload.date);
+  const sessionRow = (
+    await db
+      .select()
+      .from(workoutSessions)
+      .where(eq(workoutSessions.id, sessionData.sessionId))
+      .limit(1)
+  )[0];
+
+  let exercises: PlannedExercise[] = [];
+  if (sessionRow?.sessionNotes) {
+    try {
+      exercises = JSON.parse(sessionRow.sessionNotes);
+    } catch {
+      exercises = [];
+    }
+  }
+
+  const dateLabel = payload.date ? `workout for ${payload.date}` : "today's workout";
+
+  if (exercises.length === 0) {
+    const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+    return {
+      success: false,
+      message: `No exercises found in ${dateLabel}. Add exercises first.`,
+      updatedCount: 0,
+      todaysWorkout,
+    };
+  }
+
+  let updatedCount = 0;
+  const updateSummaries: string[] = [];
+
+  for (const item of payload.updates) {
+    const targetIdx = findExerciseIndexInList(exercises, {
+      exerciseIndex: item.exerciseIndex,
+      exerciseNumber: item.exerciseNumber,
+      nameQuery: item.currentExerciseName || item.oldExerciseName,
+    });
+
+    if (targetIdx >= 0 && targetIdx < exercises.length) {
+      const existing = exercises[targetIdx];
+      const previousName = existing.exerciseName;
+      const newNameCandidate = item.newExerciseName || item.exerciseName;
+      let finalName = existing.exerciseName;
+      let finalPattern = existing.movementPattern;
+      let catalogEx: CatalogExercise | undefined;
+
+      if (newNameCandidate && newNameCandidate.trim()) {
+        const resolved = resolveExerciseName(newNameCandidate);
+        finalName = resolved.standardizedName;
+        finalPattern = resolved.movementPattern;
+        catalogEx = resolved.catalogExercise;
+      }
+
+      let finalBenefits = existing.benefits;
+      if (item.benefits !== undefined) {
+        finalBenefits = item.benefits;
+      }
+
+      let finalInstructions = existing.instructions;
+      if (item.instructions !== undefined) {
+        if (Array.isArray(item.instructions)) {
+          finalInstructions = item.instructions;
+        } else if (typeof item.instructions === "string") {
+          finalInstructions = item.instructions
+            .split(/(?:\r?\n|\s*\d+\.\s+)/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        }
+      } else if (finalName !== previousName && catalogEx?.instructions && catalogEx.instructions.length > 0) {
+        finalInstructions = catalogEx.instructions;
+      }
+
+      const updatedExercise: PlannedExercise = {
+        ...existing,
+        exerciseName: finalName,
+        movementPattern: finalPattern,
+        targetSets: item.targetSets !== undefined ? Math.max(1, item.targetSets) : existing.targetSets,
+        targetReps: item.targetReps !== undefined ? Math.max(1, item.targetReps) : existing.targetReps,
+        targetLoad: item.targetLoad !== undefined ? Math.max(0, item.targetLoad) : existing.targetLoad,
+        loadUnit: item.loadUnit || existing.loadUnit,
+        targetRpe: item.targetRpe !== undefined ? Math.min(10, Math.max(1, item.targetRpe)) : existing.targetRpe,
+        restSeconds: item.restSeconds !== undefined ? Math.max(15, item.restSeconds) : existing.restSeconds,
+        notes: item.notes !== undefined ? item.notes : existing.notes,
+        benefits: finalBenefits,
+        instructions: finalInstructions,
+      };
+
+      exercises[targetIdx] = updatedExercise;
+      updatedCount++;
+
+      if (finalName.toLowerCase() !== previousName.toLowerCase()) {
+        updateSummaries.push(`#${targetIdx + 1}: "${previousName}" → "${finalName}"`);
+      } else {
+        updateSummaries.push(`#${targetIdx + 1}: "${finalName}"`);
+      }
+    }
+  }
+
+  if (updatedCount > 0) {
+    await db
+      .update(workoutSessions)
+      .set({
+        sessionNotes: JSON.stringify(exercises),
+      })
+      .where(eq(workoutSessions.id, sessionData.sessionId));
+  }
+
+  const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+  return {
+    success: updatedCount > 0,
+    message:
+      updatedCount > 0
+        ? `Successfully updated ${updatedCount} exercise(s) in ${dateLabel} (${updateSummaries.join(", ")}).`
+        : `No matching exercises found to update in ${dateLabel}.`,
+    updatedCount,
+    todaysWorkout,
+  };
 }
 
 /**
  * Server Action: Updates or replaces an existing exercise in a workout routine (for today or a scheduled date).
  * Can target the exercise by 0-based index, 1-based number (1..N), or current exercise name.
+ * Also supports batch updates if payload.updates is provided.
  * Resolves new exercise name against the 876-exercise catalog; if not found, preserves custom name.
  */
 export async function updateWorkoutExerciseAction(payload: UpdateWorkoutExercisePayload): Promise<{
@@ -3346,6 +3575,18 @@ export async function updateWorkoutExerciseAction(payload: UpdateWorkoutExercise
   message: string;
   todaysWorkout: TodaysWorkoutView;
 }> {
+  if (payload.updates && Array.isArray(payload.updates) && payload.updates.length > 0) {
+    const batchRes = await batchUpdateWorkoutExercisesAction({
+      updates: payload.updates,
+      date: payload.date,
+    });
+    return {
+      success: batchRes.success,
+      message: batchRes.message,
+      todaysWorkout: batchRes.todaysWorkout,
+    };
+  }
+
   const sessionData = await getOrCreateActiveSession(payload.date);
   const sessionRow = (
     await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)

@@ -34,6 +34,8 @@ import {
   submitWorkoutDebriefAction,
   updateExerciseBenefitsAndGuideAction,
   getDailyNutritionReportAction,
+  setWorkoutRoutineAction,
+  batchUpdateWorkoutExercisesAction,
 } from "@/app/actions";
 import type { WeeklySplitDay, MonthlyPhase } from "@/db/schema";
 
@@ -500,6 +502,90 @@ export function registerHandlers(server: Server) {
           },
         },
         {
+          name: "batch_update_workout",
+          description:
+            "Update or swap multiple exercises in a workout routine all at once in a single call. Accepts an array of exercise updates/replacements specifying each exercise by name ('current_exercise_name') or position ('exercise_number' 1..N / 'exercise_index').",
+          inputSchema: {
+            type: "object",
+            properties: {
+              updates: {
+                type: "array",
+                description:
+                  "Array of exercise update objects. Each item can include: current_exercise_name, new_exercise_name, exercise_name, exercise_number, exercise_index, target_sets, target_reps, target_load, load_unit, target_rpe, rest_seconds, notes, benefits, instructions.",
+                items: {
+                  type: "object",
+                  properties: {
+                    current_exercise_name: { type: "string", description: "Current exercise name to replace or update." },
+                    new_exercise_name: { type: "string", description: "New replacement exercise name." },
+                    exercise_name: { type: "string", description: "Exercise name." },
+                    exercise_number: { type: "number", description: "1-based position (1..N)." },
+                    exercise_index: { type: "number", description: "0-based index." },
+                    target_sets: { type: "number", description: "Target sets." },
+                    target_reps: { type: "number", description: "Target reps." },
+                    target_load: { type: "number", description: "Target load." },
+                    load_unit: { type: "string", enum: ["kg", "lb"] },
+                    target_rpe: { type: "number", description: "Target RPE." },
+                    rest_seconds: { type: "number", description: "Rest seconds." },
+                    notes: { type: "string", description: "Notes/cues." },
+                    benefits: { type: "string", description: "Why do this exercise." },
+                    instructions: { type: "string", description: "How to do this exercise." },
+                  },
+                },
+              },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'today'). If omitted, defaults to today.",
+              },
+            },
+            required: ["updates"],
+          },
+        },
+        {
+          name: "set_workout_routine",
+          description:
+            "Set or replace the entire workout routine (all exercises at once) for today or a specific date in a single call, specifying session name, session type, and the full list of exercises with target sets, reps, loads, benefits, and instructions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              session_name: {
+                type: "string",
+                description: "Name of the workout session (e.g. 'Upper Body Hypertrophy', '5-Day Split Lower #1').",
+              },
+              session_type: {
+                type: "string",
+                description: "Session type (e.g. 'push', 'pull', 'legs', 'upper', 'lower', 'full_body', 'custom').",
+              },
+              exercises: {
+                type: "array",
+                description: "Complete array of exercise objects for this workout session.",
+                items: {
+                  type: "object",
+                  properties: {
+                    exercise_name: { type: "string", description: "Name of the exercise (checked against catalog or saved as custom)." },
+                    target_sets: { type: "number", description: "Target sets (default: 3)." },
+                    target_reps: { type: "number", description: "Target reps (default: 10)." },
+                    target_load: { type: "number", description: "Target load in kg or lb." },
+                    load_unit: { type: "string", enum: ["kg", "lb"] },
+                    target_rpe: { type: "number", description: "Target RPE effort (1-10)." },
+                    rest_seconds: { type: "number", description: "Rest interval in seconds." },
+                    notes: { type: "string", description: "Coaching cues or notes." },
+                    benefits: { type: "string", description: "Why do this exercise: adaptations and goals." },
+                    instructions: { type: "string", description: "How to do this exercise step-by-step." },
+                  },
+                  required: ["exercise_name"],
+                },
+              },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'today'). If omitted, defaults to today.",
+              },
+            },
+            required: ["exercises"],
+          },
+        },
+        {
           name: "delete_workout_exercise",
           description:
             "Delete an exercise from a workout routine on the website for today or a specific date by name (exercise_name) or position (exercise_number 1..N / exercise_index 0..N).",
@@ -916,6 +1002,44 @@ export function registerHandlers(server: Server) {
 
         case "replace_workout_exercise":
         case "update_workout_exercise": {
+          if (args?.updates !== undefined) {
+            const updatesRaw = parseJsonArray<any>(args.updates);
+            if (updatesRaw && updatesRaw.length > 0) {
+              const date = args?.date !== undefined ? String(args.date) : undefined;
+              const updates = updatesRaw.map((u: any) => ({
+                exerciseIndex: u.exercise_index !== undefined ? Number(u.exercise_index) : undefined,
+                exerciseNumber: u.exercise_number !== undefined ? Number(u.exercise_number) : undefined,
+                currentExerciseName: u.current_exercise_name !== undefined ? String(u.current_exercise_name) : undefined,
+                oldExerciseName: u.old_exercise_name !== undefined ? String(u.old_exercise_name) : undefined,
+                exerciseName: u.new_exercise_name !== undefined ? String(u.new_exercise_name) : u.exercise_name !== undefined ? String(u.exercise_name) : undefined,
+                newExerciseName: u.new_exercise_name !== undefined ? String(u.new_exercise_name) : undefined,
+                targetSets: u.target_sets !== undefined ? Number(u.target_sets) : undefined,
+                targetReps: u.target_reps !== undefined ? Number(u.target_reps) : undefined,
+                targetLoad: u.target_load !== undefined ? Number(u.target_load) : undefined,
+                loadUnit: (u.load_unit === "lb" ? "lb" : u.load_unit === "kg" ? "kg" : undefined) as "kg" | "lb" | undefined,
+                targetRpe: u.target_rpe !== undefined ? Number(u.target_rpe) : undefined,
+                restSeconds: u.rest_seconds !== undefined ? Number(u.rest_seconds) : undefined,
+                notes: u.notes !== undefined ? String(u.notes) : undefined,
+                benefits: u.benefits !== undefined ? String(u.benefits) : undefined,
+                instructions: u.instructions !== undefined ? u.instructions : undefined,
+              }));
+
+              const result = await batchUpdateWorkoutExercisesAction({
+                updates,
+                date,
+              });
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                  },
+                ],
+              };
+            }
+          }
+
           const exerciseIndex =
             args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
           const exerciseNumber =
@@ -976,6 +1100,92 @@ export function registerHandlers(server: Server) {
             notes,
             benefits,
             instructions,
+            date,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "batch_update_workout": {
+          const updatesRaw = parseJsonArray<any>(args?.updates);
+          if (!updatesRaw || updatesRaw.length === 0) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Missing required parameter 'updates' (non-empty array)."
+            );
+          }
+
+          const date = args?.date !== undefined ? String(args.date) : undefined;
+          const updates = updatesRaw.map((u: any) => ({
+            exerciseIndex: u.exercise_index !== undefined ? Number(u.exercise_index) : undefined,
+            exerciseNumber: u.exercise_number !== undefined ? Number(u.exercise_number) : undefined,
+            currentExerciseName: u.current_exercise_name !== undefined ? String(u.current_exercise_name) : undefined,
+            oldExerciseName: u.old_exercise_name !== undefined ? String(u.old_exercise_name) : undefined,
+            exerciseName: u.new_exercise_name !== undefined ? String(u.new_exercise_name) : u.exercise_name !== undefined ? String(u.exercise_name) : undefined,
+            newExerciseName: u.new_exercise_name !== undefined ? String(u.new_exercise_name) : undefined,
+            targetSets: u.target_sets !== undefined ? Number(u.target_sets) : undefined,
+            targetReps: u.target_reps !== undefined ? Number(u.target_reps) : undefined,
+            targetLoad: u.target_load !== undefined ? Number(u.target_load) : undefined,
+            loadUnit: (u.load_unit === "lb" ? "lb" : u.load_unit === "kg" ? "kg" : undefined) as "kg" | "lb" | undefined,
+            targetRpe: u.target_rpe !== undefined ? Number(u.target_rpe) : undefined,
+            restSeconds: u.rest_seconds !== undefined ? Number(u.rest_seconds) : undefined,
+            notes: u.notes !== undefined ? String(u.notes) : undefined,
+            benefits: u.benefits !== undefined ? String(u.benefits) : undefined,
+            instructions: u.instructions !== undefined ? u.instructions : undefined,
+          }));
+
+          const result = await batchUpdateWorkoutExercisesAction({
+            updates,
+            date,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        }
+
+        case "set_workout_routine": {
+          const exercisesRaw = parseJsonArray<any>(args?.exercises);
+          if (!exercisesRaw || exercisesRaw.length === 0) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Missing required parameter 'exercises' (non-empty array)."
+            );
+          }
+
+          const sessionName = args?.session_name !== undefined ? String(args.session_name) : undefined;
+          const sessionType = args?.session_type !== undefined ? String(args.session_type) : undefined;
+          const date = args?.date !== undefined ? String(args.date) : undefined;
+
+          const exercises = exercisesRaw.map((ex: any) => ({
+            exerciseName: String(ex.exercise_name || ex.name || "Custom Exercise"),
+            targetSets: ex.target_sets !== undefined ? Number(ex.target_sets) : undefined,
+            targetReps: ex.target_reps !== undefined ? Number(ex.target_reps) : undefined,
+            targetLoad: ex.target_load !== undefined ? Number(ex.target_load) : undefined,
+            loadUnit: (ex.load_unit === "lb" ? "lb" : "kg") as "kg" | "lb",
+            targetRpe: ex.target_rpe !== undefined ? Number(ex.target_rpe) : undefined,
+            restSeconds: ex.rest_seconds !== undefined ? Number(ex.rest_seconds) : undefined,
+            notes: ex.notes !== undefined ? String(ex.notes) : undefined,
+            benefits: ex.benefits !== undefined ? String(ex.benefits) : undefined,
+            instructions: ex.instructions !== undefined ? ex.instructions : undefined,
+          }));
+
+          const result = await setWorkoutRoutineAction({
+            sessionName,
+            sessionType,
+            exercises,
             date,
           });
 

@@ -110,13 +110,15 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 20 streamlined action & state mutation tools", async () => {
+  it("lists all 22 streamlined action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(20);
+    expect(res.tools).toHaveLength(22);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("get_active_workout");
     expect(toolNames).toContain("generate_ai_workout");
+    expect(toolNames).toContain("set_workout_routine");
+    expect(toolNames).toContain("batch_update_workout");
     expect(toolNames).toContain("add_workout_exercise");
     expect(toolNames).toContain("update_workout_exercise");
     expect(toolNames).toContain("replace_workout_exercise");
@@ -580,5 +582,64 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(
       deleteResult.todaysWorkout.exercises.some((e: any) => e.exerciseName === "Cable Crossover")
     ).toBe(false);
+  });
+
+  it("sets a full multi-exercise workout at once and batch updates multiple exercises simultaneously", async () => {
+    // 1. Set full 5-exercise workout routine in one single tool call
+    const setRes = await client.callTool({
+      name: "set_workout_routine",
+      arguments: {
+        session_name: "Push Day Hypertrophy & Delts",
+        session_type: "push",
+        exercises: [
+          { exercise_name: "Barbell Bench Press", target_sets: 4, target_reps: 8, target_load: 80, benefits: "Pectoral hypertrophy" },
+          { exercise_name: "Incline Dumbbell Press", target_sets: 3, target_reps: 10, target_load: 30 },
+          { exercise_name: "Standing Military Press", target_sets: 3, target_reps: 8, target_load: 50 },
+          { exercise_name: "Dumbbell Lateral Raise", target_sets: 4, target_reps: 15, target_load: 12 },
+          { exercise_name: "Cable Tricep Pushdown", target_sets: 3, target_reps: 12, target_load: 25 },
+        ],
+      },
+    });
+
+    expect(setRes.isError).toBeFalsy();
+    const setResult = JSON.parse(((setRes as any).content[0] as { text: string }).text);
+    expect(setResult.success).toBe(true);
+    expect(setResult.todaysWorkout.sessionName).toBe("Push Day Hypertrophy & Delts");
+    expect(setResult.todaysWorkout.exercises).toHaveLength(5);
+    expect(setResult.todaysWorkout.exercises[0].exerciseName).toContain("Bench Press");
+    expect(setResult.todaysWorkout.exercises[0].benefits).toBe("Pectoral hypertrophy");
+
+    // 2. Batch update 2 exercises at the same time in one single tool call
+    const batchRes = await client.callTool({
+      name: "batch_update_workout",
+      arguments: {
+        updates: [
+          {
+            current_exercise_name: "Barbell Bench Press",
+            new_exercise_name: "Floor Press",
+            target_sets: 5,
+            target_reps: 5,
+            target_load: 85,
+            notes: "Shoulder-safe pressing",
+          },
+          {
+            current_exercise_name: "Cable Tricep Pushdown",
+            new_exercise_name: "Skull Crushers",
+            target_sets: 4,
+            target_reps: 10,
+            target_load: 30,
+          },
+        ],
+      },
+    });
+
+    expect(batchRes.isError).toBeFalsy();
+    const batchResult = JSON.parse(((batchRes as any).content[0] as { text: string }).text);
+    expect(batchResult.success).toBe(true);
+    expect(batchResult.updatedCount).toBe(2);
+    expect(batchResult.todaysWorkout.exercises[0].exerciseName).toBe("Floor Press");
+    expect(batchResult.todaysWorkout.exercises[0].targetSets).toBe(5);
+    expect(batchResult.todaysWorkout.exercises[4].exerciseName).toBe("Skull Crushers");
+    expect(batchResult.todaysWorkout.exercises[4].targetLoad).toBe(30);
   });
 });
