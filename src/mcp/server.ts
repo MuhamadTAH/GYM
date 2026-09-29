@@ -358,25 +358,38 @@ export function registerHandlers(server: Server) {
         {
           name: "update_workout_exercise",
           description:
-            "Update an existing exercise in a workout routine on the website (modify sets, reps, load, rest, notes, or name) for today or a specific date.",
+            "Update an existing exercise in a workout routine on the website (modify sets, reps, load, rest, notes, benefits, instructions, or swap exercise name). You can identify the exercise either by its name (current_exercise_name) or position (exercise_number 1..N / exercise_index 0..N).",
           inputSchema: {
             type: "object",
             properties: {
+              current_exercise_name: {
+                type: "string",
+                description:
+                  "Name of the exercise currently in the workout to update or swap out (e.g. 'Barbell Bench Press', 'bench press'). You don't need to know the index number if you provide this name.",
+              },
+              exercise_number: {
+                type: "number",
+                description: "Optional 1-based position in the workout (e.g. 1 for first exercise, 2 for second, up to 5 for fifth).",
+              },
               exercise_index: {
                 type: "number",
-                description: "The 0-based index of the exercise in the workout.",
+                description: "Optional 0-based index of the exercise in the workout (e.g. 0 to 4).",
+              },
+              new_exercise_name: {
+                type: "string",
+                description: "New exercise name to swap to (checked against 876-exercise catalog or saved as custom).",
               },
               exercise_name: {
                 type: "string",
-                description: "New exercise name (checked against catalog).",
+                description: "New exercise name (alias for new_exercise_name).",
               },
               target_sets: {
                 type: "number",
-                description: "Target sets.",
+                description: "Target working sets.",
               },
               target_reps: {
                 type: "number",
-                description: "Target reps.",
+                description: "Target repetitions per set.",
               },
               target_load: {
                 type: "number",
@@ -385,7 +398,11 @@ export function registerHandlers(server: Server) {
               load_unit: {
                 type: "string",
                 enum: ["kg", "lb"],
-                description: "Unit of target load.",
+                description: "Unit of target load (default: kg).",
+              },
+              target_rpe: {
+                type: "number",
+                description: "Target RPE effort (1-10).",
               },
               rest_seconds: {
                 type: "number",
@@ -395,33 +412,118 @@ export function registerHandlers(server: Server) {
                 type: "string",
                 description: "Coaching notes or execution cues.",
               },
+              benefits: {
+                type: "string",
+                description: "Why do this exercise: target adaptations, hypertrophy, and strength role.",
+              },
+              instructions: {
+                type: "string",
+                description: "How to do it: step-by-step setup cues, form execution, and tips.",
+              },
               date: {
                 type: "string",
                 description:
-                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep'). If omitted, defaults to today.",
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'today'). If omitted, defaults to today.",
               },
             },
-            required: ["exercise_index"],
+          },
+        },
+        {
+          name: "replace_workout_exercise",
+          description:
+            "Replace or swap one exercise in a workout session with another exercise (e.g. swap 1 of the 5 exercises in the workout session). You can specify the exercise to swap out either by its name (current_exercise_name: 'Bench Press') or its position (exercise_number: 1..5 / exercise_index: 0..4), and provide the new exercise name, target sets/reps/load, benefits, and execution instructions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              current_exercise_name: {
+                type: "string",
+                description:
+                  "Name of the exercise currently in the workout to replace (e.g. 'Barbell Bench Press', 'bench press'). You do not need to know the index number if you provide this name.",
+              },
+              new_exercise_name: {
+                type: "string",
+                description:
+                  "Name of the new replacement exercise (e.g. 'Incline Dumbbell Press', 'Floor Press'). Checked against the 876-exercise catalog or saved as custom name.",
+              },
+              exercise_number: {
+                type: "number",
+                description: "Optional 1-based position in the workout (e.g. 1 for first exercise, 2 for second, up to 5 for fifth).",
+              },
+              exercise_index: {
+                type: "number",
+                description: "Optional 0-based index in the workout (e.g. 0 to 4).",
+              },
+              target_sets: {
+                type: "number",
+                description: "Target working sets for the new exercise (default: preserves existing sets or 3).",
+              },
+              target_reps: {
+                type: "number",
+                description: "Target repetitions per set (default: preserves existing reps or 10).",
+              },
+              target_load: {
+                type: "number",
+                description: "Target load in kg or lb.",
+              },
+              load_unit: {
+                type: "string",
+                enum: ["kg", "lb"],
+                description: "Unit of target load (kg or lb).",
+              },
+              target_rpe: {
+                type: "number",
+                description: "Target RPE effort (1-10).",
+              },
+              rest_seconds: {
+                type: "number",
+                description: "Rest interval in seconds.",
+              },
+              notes: {
+                type: "string",
+                description: "Coaching notes or execution cues for the new exercise.",
+              },
+              benefits: {
+                type: "string",
+                description: "Why do this exercise: target adaptations, hypertrophy, and strength role.",
+              },
+              instructions: {
+                type: "string",
+                description: "How to do it: step-by-step setup cues, form execution, and tips.",
+              },
+              date: {
+                type: "string",
+                description:
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'today'). If omitted, defaults to today.",
+              },
+            },
+            required: ["new_exercise_name"],
           },
         },
         {
           name: "delete_workout_exercise",
           description:
-            "Delete an exercise by index from a workout routine on the website for today or a specific date.",
+            "Delete an exercise from a workout routine on the website for today or a specific date by name (exercise_name) or position (exercise_number 1..N / exercise_index 0..N).",
           inputSchema: {
             type: "object",
             properties: {
+              exercise_name: {
+                type: "string",
+                description: "Name of the exercise to remove (e.g. 'Tricep Pushdown', 'bench press'). You can provide this instead of index.",
+              },
+              exercise_number: {
+                type: "number",
+                description: "Optional 1-based position in the workout (e.g. 1 for first exercise, 5 for fifth exercise).",
+              },
               exercise_index: {
                 type: "number",
-                description: "The 0-based index of the exercise to remove.",
+                description: "Optional 0-based index of the exercise to remove.",
               },
               date: {
                 type: "string",
                 description:
-                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep'). If omitted, defaults to today.",
+                  "Optional target calendar date (e.g. '2026-09-29', '29 of sep', 'today'). If omitted, defaults to today.",
               },
             },
-            required: ["exercise_index"],
           },
         },
         {
@@ -716,16 +818,17 @@ export function registerHandlers(server: Server) {
         {
           name: "update_exercise_guide",
           description:
-            "Update or write the custom Benefits ('why do this workout/exercise') and How-To execution instructions for an exercise in today's or a scheduled date's workout.",
+            "Update or write the custom Benefits ('why do this workout/exercise') and How-To execution instructions for an exercise in today's or a scheduled date's workout by name (exercise_name) or position (exercise_number 1..N / exercise_index 0..N).",
           inputSchema: {
             type: "object",
             properties: {
-              exercise_index: { type: "number", description: "0-based index of the exercise in the workout." },
+              exercise_name: { type: "string", description: "Name of the exercise in the workout (e.g. 'Barbell Bench Press'). You can provide this instead of index." },
+              exercise_number: { type: "number", description: "Optional 1-based position in the workout (e.g. 1 for first exercise, 2 for second)." },
+              exercise_index: { type: "number", description: "Optional 0-based index of the exercise in the workout." },
               benefits: { type: "string", description: "Why do this exercise: target adaptations, hypertrophy, and strength role." },
               instructions: { type: "string", description: "How to do it: step-by-step setup cues, form execution, and tips." },
               date: { type: "string", description: "Optional target workout date (e.g. '2026-09-28', 'today')." },
             },
-            required: ["exercise_index"],
           },
         },
         {
@@ -811,29 +914,68 @@ export function registerHandlers(server: Server) {
           };
         }
 
+        case "replace_workout_exercise":
         case "update_workout_exercise": {
-          if (args?.exercise_index === undefined) {
-            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+          const exerciseIndex =
+            args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
+          const exerciseNumber =
+            args?.exercise_number !== undefined ? Number(args.exercise_number) : undefined;
+          const currentExerciseName =
+            args?.current_exercise_name !== undefined
+              ? String(args.current_exercise_name)
+              : args?.old_exercise_name !== undefined
+              ? String(args.old_exercise_name)
+              : undefined;
+          const newExerciseName =
+            args?.new_exercise_name !== undefined
+              ? String(args.new_exercise_name)
+              : args?.exercise_name !== undefined
+              ? String(args.exercise_name)
+              : undefined;
+
+          if (
+            exerciseIndex === undefined &&
+            exerciseNumber === undefined &&
+            !currentExerciseName &&
+            !newExerciseName
+          ) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Must provide 'current_exercise_name', 'exercise_number' (1..N), or 'exercise_index' (0..N) to identify the exercise."
+            );
           }
-          const exerciseIndex = Number(args.exercise_index);
-          const exerciseName = args?.exercise_name !== undefined ? String(args.exercise_name) : undefined;
+
           const targetSets = args?.target_sets !== undefined ? Number(args.target_sets) : undefined;
           const targetReps = args?.target_reps !== undefined ? Number(args.target_reps) : undefined;
           const targetLoad = args?.target_load !== undefined ? Number(args.target_load) : undefined;
-          const loadUnit = args?.load_unit === "lb" ? "lb" : args?.load_unit === "kg" ? "kg" : undefined;
-          const restSeconds = args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
+          const loadUnit =
+            args?.load_unit === "lb" ? "lb" : args?.load_unit === "kg" ? "kg" : undefined;
+          const targetRpe = args?.target_rpe !== undefined ? Number(args.target_rpe) : undefined;
+          const restSeconds =
+            args?.rest_seconds !== undefined ? Number(args.rest_seconds) : undefined;
           const notes = args?.notes !== undefined ? String(args.notes) : undefined;
+          const benefits = args?.benefits !== undefined ? String(args.benefits) : undefined;
+          const instructions =
+            args?.instructions !== undefined
+              ? (args.instructions as string[] | string)
+              : undefined;
           const date = args?.date !== undefined ? String(args.date) : undefined;
 
           const result = await updateWorkoutExerciseAction({
             exerciseIndex,
-            exerciseName,
+            exerciseNumber,
+            currentExerciseName,
+            exerciseName: newExerciseName,
+            newExerciseName,
             targetSets,
             targetReps,
             targetLoad,
             loadUnit,
+            targetRpe,
             restSeconds,
             notes,
+            benefits,
+            instructions,
             date,
           });
 
@@ -848,13 +990,36 @@ export function registerHandlers(server: Server) {
         }
 
         case "delete_workout_exercise": {
-          if (args?.exercise_index === undefined) {
-            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+          const exerciseIndex =
+            args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
+          const exerciseNumber =
+            args?.exercise_number !== undefined ? Number(args.exercise_number) : undefined;
+          const exerciseName =
+            args?.exercise_name !== undefined
+              ? String(args.exercise_name)
+              : args?.current_exercise_name !== undefined
+              ? String(args.current_exercise_name)
+              : undefined;
+
+          if (
+            exerciseIndex === undefined &&
+            exerciseNumber === undefined &&
+            !exerciseName
+          ) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Must provide 'exercise_name', 'exercise_number' (1..N), or 'exercise_index' (0..N) to delete."
+            );
           }
-          const exerciseIndex = Number(args.exercise_index);
+
           const date = args?.date !== undefined ? String(args.date) : undefined;
 
-          const result = await deleteWorkoutExerciseAction(exerciseIndex, date);
+          const result = await deleteWorkoutExerciseAction({
+            exerciseIndex,
+            exerciseNumber,
+            exerciseName,
+            date,
+          });
 
           return {
             content: [
@@ -1138,15 +1303,34 @@ export function registerHandlers(server: Server) {
         }
 
         case "update_exercise_guide": {
-          const exerciseIndex = args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
-          if (exerciseIndex === undefined || isNaN(exerciseIndex)) {
-            throw new McpError(ErrorCode.InvalidParams, "Missing required parameter 'exercise_index'.");
+          const exerciseIndex =
+            args?.exercise_index !== undefined ? Number(args.exercise_index) : undefined;
+          const exerciseNumber =
+            args?.exercise_number !== undefined ? Number(args.exercise_number) : undefined;
+          const exerciseName =
+            args?.exercise_name !== undefined
+              ? String(args.exercise_name)
+              : args?.current_exercise_name !== undefined
+              ? String(args.current_exercise_name)
+              : undefined;
+
+          if (
+            exerciseIndex === undefined &&
+            exerciseNumber === undefined &&
+            !exerciseName
+          ) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Must provide 'exercise_name', 'exercise_number' (1..N), or 'exercise_index' (0..N) to update guide."
+            );
           }
 
           const result = await updateExerciseBenefitsAndGuideAction({
             exerciseIndex,
+            exerciseNumber,
+            exerciseName,
             benefits: args?.benefits !== undefined ? String(args.benefits) : undefined,
-            instructions: args?.instructions !== undefined ? String(args.instructions) : undefined,
+            instructions: args?.instructions !== undefined ? (args.instructions as any) : undefined,
             date: args?.date !== undefined ? String(args.date) : undefined,
           });
 

@@ -110,15 +110,16 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(briefing.dailyTargets).toBeDefined();
   });
 
-  it("lists all 19 streamlined action & state mutation tools", async () => {
+  it("lists all 20 streamlined action & state mutation tools", async () => {
     const res = await client.listTools();
-    expect(res.tools).toHaveLength(19);
+    expect(res.tools).toHaveLength(20);
 
     const toolNames = res.tools.map((t) => t.name);
     expect(toolNames).toContain("get_active_workout");
     expect(toolNames).toContain("generate_ai_workout");
     expect(toolNames).toContain("add_workout_exercise");
     expect(toolNames).toContain("update_workout_exercise");
+    expect(toolNames).toContain("replace_workout_exercise");
     expect(toolNames).toContain("delete_workout_exercise");
     expect(toolNames).toContain("search_exercise_catalog");
     expect(toolNames).toContain("get_exercise_guide");
@@ -478,5 +479,106 @@ describe("Native Model Context Protocol (MCP) Server", () => {
     expect(reportPayload.caloriesUsed).toBeDefined();
     expect(reportPayload.caloriesRemaining).toBeDefined();
     expect(Array.isArray(reportPayload.loggedItems)).toBe(true);
+  });
+
+  it("swaps 1 of 5 exercises in a workout session by name or position using replace_workout_exercise", async () => {
+    // 1. Generate or populate a 5-exercise workout
+    await client.callTool({
+      name: "generate_ai_workout",
+      arguments: {
+        prompt: "5-exercise upper body workout: Bench Press, Overhead Press, Incline Dumbbell Press, Tricep Pushdown, Lateral Raise",
+      },
+    });
+
+    const activeRes = await client.callTool({
+      name: "get_active_workout",
+      arguments: {},
+    });
+    const activeWorkout = JSON.parse(((activeRes as any).content[0] as { text: string }).text);
+    expect(activeWorkout.exercises.length).toBeGreaterThanOrEqual(1);
+
+    // Ensure we have at least 5 exercises
+    while (activeWorkout.exercises.length < 5) {
+      const addRes = await client.callTool({
+        name: "add_workout_exercise",
+        arguments: { exercise_name: `Extra Exercise ${activeWorkout.exercises.length + 1}` },
+      });
+      const parsedAdd = JSON.parse(((addRes as any).content[0] as { text: string }).text);
+      activeWorkout.exercises = parsedAdd.todaysWorkout.exercises;
+    }
+
+    const firstExerciseName = activeWorkout.exercises[0].exerciseName;
+    const initialCount = activeWorkout.exercises.length;
+
+    // 2. AI swaps the first exercise by its name using replace_workout_exercise
+    const swapByNameRes = await client.callTool({
+      name: "replace_workout_exercise",
+      arguments: {
+        current_exercise_name: firstExerciseName,
+        new_exercise_name: "Dumbbell Bench Press",
+        target_sets: 4,
+        target_reps: 8,
+        target_load: 32,
+        load_unit: "kg",
+        benefits: "Allows deeper stretch at the bottom without shoulder impingement.",
+        instructions: "1. Lie flat on bench. 2. Lower dumbbells with control. 3. Press up in an arch.",
+      },
+    });
+
+    expect(swapByNameRes.isError).toBeFalsy();
+    const swapResult = JSON.parse(((swapByNameRes as any).content[0] as { text: string }).text);
+    expect(swapResult.success).toBe(true);
+    expect(swapResult.todaysWorkout.exercises).toHaveLength(initialCount);
+    expect(swapResult.todaysWorkout.exercises[0].exerciseName).toBe("Dumbbell Bench Press");
+    expect(swapResult.todaysWorkout.exercises[0].targetSets).toBe(4);
+    expect(swapResult.todaysWorkout.exercises[0].targetReps).toBe(8);
+    expect(swapResult.todaysWorkout.exercises[0].benefits).toContain("shoulder impingement");
+    expect(swapResult.todaysWorkout.exercises[0].instructions).toHaveLength(3);
+
+    // 3. AI swaps the 3rd exercise using 1-based exercise_number
+    const swapByNumberRes = await client.callTool({
+      name: "replace_workout_exercise",
+      arguments: {
+        exercise_number: 3,
+        new_exercise_name: "Cable Crossover",
+        target_sets: 3,
+        target_reps: 15,
+      },
+    });
+
+    expect(swapByNumberRes.isError).toBeFalsy();
+    const numberResult = JSON.parse(((swapByNumberRes as any).content[0] as { text: string }).text);
+    expect(numberResult.success).toBe(true);
+    expect(numberResult.todaysWorkout.exercises[2].exerciseName).toBe("Cable Crossover");
+    expect(numberResult.todaysWorkout.exercises[2].targetReps).toBe(15);
+
+    // 4. Update exercise guide by exercise name
+    const guideByNameRes = await client.callTool({
+      name: "update_exercise_guide",
+      arguments: {
+        exercise_name: "Cable Crossover",
+        benefits: "Peak contraction and tension across the entire chest range of motion.",
+        instructions: "Cross hands over at full contraction for peak squeeze.",
+      },
+    });
+    expect(guideByNameRes.isError).toBeFalsy();
+    const guideResult = JSON.parse(((guideByNameRes as any).content[0] as { text: string }).text);
+    expect(guideResult.success).toBe(true);
+    expect(guideResult.todaysWorkout.exercises[2].benefits).toContain("Peak contraction");
+
+    // 5. Delete an exercise by name
+    const deleteByNameRes = await client.callTool({
+      name: "delete_workout_exercise",
+      arguments: {
+        exercise_name: "Cable Crossover",
+      },
+    });
+    expect(deleteByNameRes.isError).toBeFalsy();
+    const deleteResult = JSON.parse(((deleteByNameRes as any).content[0] as { text: string }).text);
+    expect(deleteResult.success).toBe(true);
+    expect(deleteResult.todaysWorkout.exercises).toHaveLength(initialCount - 1);
+    expect(
+      deleteResult.todaysWorkout.exercises.some((e: any) => e.exerciseName === "Cable Crossover")
+    ).toBe(false);
   });
 });

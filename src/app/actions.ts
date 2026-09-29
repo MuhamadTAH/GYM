@@ -3263,20 +3263,85 @@ export async function addExerciseToWorkoutAction(payload: {
 }
 
 /**
- * Server Action: Updates an existing exercise in a workout routine (optionally for a specific date).
- * Resolves exercise name against the 876-exercise catalog; if not found, preserves the custom name.
+ * Helper to match an exercise in a planned workout session by name, 1-based number, or 0-based index.
  */
-export async function updateWorkoutExerciseAction(payload: {
-  exerciseIndex: number;
-  exerciseName?: string;
+function findExerciseIndexInList(
+  exercises: PlannedExercise[],
+  options: {
+    exerciseIndex?: number;
+    exerciseNumber?: number;
+    nameQuery?: string;
+  }
+): number {
+  if (options.nameQuery && options.nameQuery.trim()) {
+    const q = options.nameQuery.trim().toLowerCase();
+    // 1. Exact match (case-insensitive)
+    const exactIdx = exercises.findIndex(
+      (e) => e.exerciseName.trim().toLowerCase() === q
+    );
+    if (exactIdx !== -1) return exactIdx;
+
+    // 2. Substring or reverse substring match
+    const subIdx = exercises.findIndex(
+      (e) =>
+        e.exerciseName.toLowerCase().includes(q) ||
+        q.includes(e.exerciseName.toLowerCase())
+    );
+    if (subIdx !== -1) return subIdx;
+
+    // 3. Word token match
+    const words = q.split(/\s+/).filter((w) => w.length > 2);
+    if (words.length > 0) {
+      const tokenIdx = exercises.findIndex((e) => {
+        const exLower = e.exerciseName.toLowerCase();
+        return words.every((w) => exLower.includes(w));
+      });
+      if (tokenIdx !== -1) return tokenIdx;
+    }
+  }
+
+  // 1-based exercise number (e.g. 1 to 5)
+  if (options.exerciseNumber !== undefined && Number.isFinite(options.exerciseNumber)) {
+    const idx = Math.round(options.exerciseNumber) - 1;
+    if (idx >= 0 && idx < exercises.length) return idx;
+  }
+
+  // 0-based exercise index
+  if (options.exerciseIndex !== undefined && Number.isFinite(options.exerciseIndex)) {
+    const idx = Math.round(options.exerciseIndex);
+    if (idx >= 0 && idx < exercises.length) return idx;
+    // Gracefully handle 1-based off-by-one (e.g. index 5 sent when 5 exercises exist [0..4])
+    if (idx === exercises.length && exercises.length > 0) return idx - 1;
+  }
+
+  return -1;
+}
+
+export interface UpdateWorkoutExercisePayload {
+  exerciseIndex?: number;
+  exerciseNumber?: number; // 1-based index (1 to N)
+  currentExerciseName?: string; // name to match if index not provided
+  oldExerciseName?: string; // alias
+  exerciseName?: string; // new exercise name
+  newExerciseName?: string; // alias for new exercise name
   targetSets?: number;
   targetReps?: number;
   targetLoad?: number;
   loadUnit?: PreferredUnit;
+  targetRpe?: number;
   restSeconds?: number;
   notes?: string;
+  benefits?: string;
+  instructions?: string[] | string;
   date?: string;
-}): Promise<{
+}
+
+/**
+ * Server Action: Updates or replaces an existing exercise in a workout routine (for today or a scheduled date).
+ * Can target the exercise by 0-based index, 1-based number (1..N), or current exercise name.
+ * Resolves new exercise name against the 876-exercise catalog; if not found, preserves custom name.
+ */
+export async function updateWorkoutExerciseAction(payload: UpdateWorkoutExercisePayload): Promise<{
   success: boolean;
   message: string;
   todaysWorkout: TodaysWorkoutView;
@@ -3295,25 +3360,70 @@ export async function updateWorkoutExerciseAction(payload: {
     }
   }
 
-  if (payload.exerciseIndex < 0 || payload.exerciseIndex >= exercises.length) {
+  const dateLabel = payload.date ? `workout for ${payload.date}` : "today's workout";
+
+  if (exercises.length === 0) {
     const todaysWorkout = await getTodaysWorkoutAction(payload.date);
     return {
       success: false,
-      message: "Exercise index out of range.",
+      message: `No exercises found in ${dateLabel}. Add an exercise first.`,
       todaysWorkout,
     };
   }
 
-  const existing = exercises[payload.exerciseIndex];
+  const targetIdx = findExerciseIndexInList(exercises, {
+    exerciseIndex: payload.exerciseIndex,
+    exerciseNumber: payload.exerciseNumber,
+    nameQuery: payload.currentExerciseName || payload.oldExerciseName,
+  });
+
+  if (targetIdx === -1) {
+    const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+    const available = exercises.map((e, i) => `#${i + 1}: ${e.exerciseName}`).join(", ");
+    return {
+      success: false,
+      message: `Could not identify which exercise to change. Available exercises in ${dateLabel} (${exercises.length} total): ${available}.`,
+      todaysWorkout,
+    };
+  }
+
+  const existing = exercises[targetIdx];
+  const previousName = existing.exerciseName;
+  const newNameCandidate = payload.newExerciseName || payload.exerciseName;
   let finalName = existing.exerciseName;
   let finalPattern = existing.movementPattern;
   let fromCatalog = false;
+  let catalogEx: CatalogExercise | undefined;
 
-  if (payload.exerciseName && payload.exerciseName.trim()) {
-    const resolved = resolveExerciseName(payload.exerciseName);
+  if (newNameCandidate && newNameCandidate.trim()) {
+    const resolved = resolveExerciseName(newNameCandidate);
     finalName = resolved.standardizedName;
     finalPattern = resolved.movementPattern;
     fromCatalog = resolved.fromCatalog;
+    catalogEx = resolved.catalogExercise;
+  }
+
+  // Handle benefits
+  let finalBenefits = existing.benefits;
+  if (payload.benefits !== undefined) {
+    finalBenefits = payload.benefits;
+  }
+
+  // Handle instructions
+  let finalInstructions = existing.instructions;
+  if (payload.instructions !== undefined) {
+    if (Array.isArray(payload.instructions)) {
+      finalInstructions = payload.instructions;
+    } else if (typeof payload.instructions === "string") {
+      const splitSteps = payload.instructions
+        .split(/(?:\r?\n|\s*\d+\.\s+)/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      finalInstructions = splitSteps.length > 0 ? splitSteps : [payload.instructions];
+    }
+  } else if (finalName !== previousName && catalogEx?.instructions && catalogEx.instructions.length > 0) {
+    // If swapped to a catalog exercise and no custom instructions were provided, adopt catalog instructions
+    finalInstructions = catalogEx.instructions;
   }
 
   const updatedExercise: PlannedExercise = {
@@ -3324,11 +3434,14 @@ export async function updateWorkoutExerciseAction(payload: {
     targetReps: payload.targetReps !== undefined ? Math.max(1, payload.targetReps) : existing.targetReps,
     targetLoad: payload.targetLoad !== undefined ? Math.max(0, payload.targetLoad) : existing.targetLoad,
     loadUnit: payload.loadUnit || existing.loadUnit,
+    targetRpe: payload.targetRpe !== undefined ? Math.min(10, Math.max(1, payload.targetRpe)) : existing.targetRpe,
     restSeconds: payload.restSeconds !== undefined ? Math.max(15, payload.restSeconds) : existing.restSeconds,
     notes: payload.notes !== undefined ? payload.notes : existing.notes,
+    benefits: finalBenefits,
+    instructions: finalInstructions,
   };
 
-  exercises[payload.exerciseIndex] = updatedExercise;
+  exercises[targetIdx] = updatedExercise;
 
   await db
     .update(workoutSessions)
@@ -3338,27 +3451,56 @@ export async function updateWorkoutExerciseAction(payload: {
     .where(eq(workoutSessions.id, sessionData.sessionId));
 
   const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+  const positionLabel = `#${targetIdx + 1} of ${exercises.length}`;
+
+  const message =
+    finalName.toLowerCase() !== previousName.toLowerCase()
+      ? `Successfully swapped exercise ${positionLabel} from "${previousName}" to "${finalName}" (${updatedExercise.targetSets} sets x ${updatedExercise.targetReps} reps @ ${updatedExercise.targetLoad} ${updatedExercise.loadUnit}) in ${dateLabel}.`
+      : `Updated exercise ${positionLabel} ("${finalName}") in ${dateLabel}.`;
+
   return {
     success: true,
-    message: fromCatalog
-      ? `Updated exercise #${payload.exerciseIndex + 1} to catalog exercise "${finalName}".`
-      : `Updated exercise #${payload.exerciseIndex + 1} to "${finalName}".`,
+    message,
     todaysWorkout,
   };
 }
 
 /**
- * Server Action: Deletes an exercise by index from a workout (optionally for a specific date).
+ * Server Action: Deletes an exercise from a workout (by index, 1-based number, or exercise name).
  */
 export async function deleteWorkoutExerciseAction(
-  exerciseIndex: number,
+  exerciseIndexOrPayload:
+    | number
+    | {
+        exerciseIndex?: number;
+        exerciseNumber?: number;
+        exerciseName?: string;
+        currentExerciseName?: string;
+        date?: string;
+      },
   date?: string
 ): Promise<{
   success: boolean;
   message: string;
   todaysWorkout: TodaysWorkoutView;
 }> {
-  const sessionData = await getOrCreateActiveSession(date);
+  let targetIndex: number | undefined;
+  let targetNumber: number | undefined;
+  let targetName: string | undefined;
+  let targetDate = date;
+
+  if (typeof exerciseIndexOrPayload === "number") {
+    targetIndex = exerciseIndexOrPayload;
+  } else if (exerciseIndexOrPayload && typeof exerciseIndexOrPayload === "object") {
+    targetIndex = exerciseIndexOrPayload.exerciseIndex;
+    targetNumber = exerciseIndexOrPayload.exerciseNumber;
+    targetName = exerciseIndexOrPayload.exerciseName || exerciseIndexOrPayload.currentExerciseName;
+    if (exerciseIndexOrPayload.date) {
+      targetDate = exerciseIndexOrPayload.date;
+    }
+  }
+
+  const sessionData = await getOrCreateActiveSession(targetDate);
   const sessionRow = (
     await db.select().from(workoutSessions).where(eq(workoutSessions.id, sessionData.sessionId)).limit(1)
   )[0];
@@ -3372,8 +3514,16 @@ export async function deleteWorkoutExerciseAction(
     }
   }
 
-  if (exerciseIndex >= 0 && exerciseIndex < exercises.length) {
-    const removed = exercises.splice(exerciseIndex, 1);
+  const dateLabel = targetDate ? `workout for ${targetDate}` : "today's workout";
+
+  const resolvedIdx = findExerciseIndexInList(exercises, {
+    exerciseIndex: targetIndex,
+    exerciseNumber: targetNumber,
+    nameQuery: targetName,
+  });
+
+  if (resolvedIdx >= 0 && resolvedIdx < exercises.length) {
+    const removed = exercises.splice(resolvedIdx, 1);
     await db
       .update(workoutSessions)
       .set({
@@ -3381,19 +3531,19 @@ export async function deleteWorkoutExerciseAction(
       })
       .where(eq(workoutSessions.id, sessionData.sessionId));
 
-    const todaysWorkout = await getTodaysWorkoutAction(date);
-    const dateLabel = date ? `workout for ${date}` : "today's workout";
+    const todaysWorkout = await getTodaysWorkoutAction(targetDate);
     return {
       success: true,
-      message: `Removed "${removed[0]?.exerciseName || "exercise"}" from ${dateLabel}.`,
+      message: `Removed exercise #${resolvedIdx + 1} ("${removed[0]?.exerciseName || "exercise"}") from ${dateLabel}.`,
       todaysWorkout,
     };
   }
 
-  const todaysWorkout = await getTodaysWorkoutAction(date);
+  const todaysWorkout = await getTodaysWorkoutAction(targetDate);
+  const available = exercises.map((e, i) => `#${i + 1}: ${e.exerciseName}`).join(", ");
   return {
     success: false,
-    message: "Exercise index out of range.",
+    message: `Could not find exercise to delete. Available exercises in ${dateLabel} (${exercises.length} total): ${available || "none"}.`,
     todaysWorkout,
   };
 }
@@ -4013,7 +4163,10 @@ export async function submitWorkoutDebriefAction(payload: {
  * Server Action: Updates the customized Benefits and How-To execution instructions for an exercise.
  */
 export async function updateExerciseBenefitsAndGuideAction(payload: {
-  exerciseIndex: number;
+  exerciseIndex?: number;
+  exerciseNumber?: number;
+  exerciseName?: string;
+  currentExerciseName?: string;
   date?: string;
   benefits?: string;
   instructions?: string[] | string;
@@ -4036,16 +4189,23 @@ export async function updateExerciseBenefitsAndGuideAction(payload: {
     }
   }
 
-  if (payload.exerciseIndex < 0 || payload.exerciseIndex >= exercises.length) {
+  const targetIdx = findExerciseIndexInList(exercises, {
+    exerciseIndex: payload.exerciseIndex,
+    exerciseNumber: payload.exerciseNumber,
+    nameQuery: payload.exerciseName || payload.currentExerciseName,
+  });
+
+  if (targetIdx < 0 || targetIdx >= exercises.length) {
     const todaysWorkout = await getTodaysWorkoutAction(payload.date);
+    const available = exercises.map((e, i) => `#${i + 1}: ${e.exerciseName}`).join(", ");
     return {
       success: false,
-      message: "Exercise index out of range.",
+      message: `Could not find exercise to update guide. Available exercises (${exercises.length} total): ${available || "none"}.`,
       todaysWorkout,
     };
   }
 
-  const target = exercises[payload.exerciseIndex];
+  const target = exercises[targetIdx];
   if (payload.benefits !== undefined) {
     target.benefits = payload.benefits;
   }
@@ -4061,7 +4221,7 @@ export async function updateExerciseBenefitsAndGuideAction(payload: {
     }
   }
 
-  exercises[payload.exerciseIndex] = target;
+  exercises[targetIdx] = target;
 
   await db
     .update(workoutSessions)
