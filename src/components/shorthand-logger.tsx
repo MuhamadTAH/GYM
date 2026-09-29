@@ -1173,7 +1173,10 @@ export function ShorthandLogger() {
                               className="w-full h-full object-cover"
                               loading="lazy"
                               onError={(e) => {
-                                (e.target as HTMLImageElement).src = guide.thumbnailUrl;
+                                const target = e.currentTarget as HTMLImageElement;
+                                if (target.src !== guide.thumbnailUrl && guide.thumbnailUrl) {
+                                  target.src = guide.thumbnailUrl;
+                                }
                               }}
                             />
                           </div>
@@ -1486,7 +1489,10 @@ export function ShorthandLogger() {
                 alt={activeExerciseGuide.name}
                 className="w-full h-full object-contain p-2"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = activeExerciseGuide.thumbnailUrl;
+                  const target = e.currentTarget as HTMLImageElement;
+                  if (target.src !== activeExerciseGuide.thumbnailUrl && activeExerciseGuide.thumbnailUrl) {
+                    target.src = activeExerciseGuide.thumbnailUrl;
+                  }
                 }}
               />
 

@@ -59,7 +59,10 @@ export function ExerciseGuideModal({ guide, isOpen, onClose }: ExerciseGuideModa
               loading="lazy"
               onError={(e) => {
                 // Fallback to thumbnail if GIF fails to load
-                (e.target as HTMLImageElement).src = guide.thumbnailUrl;
+                const target = e.currentTarget as HTMLImageElement;
+                if (target.src !== guide.thumbnailUrl && guide.thumbnailUrl) {
+                  target.src = guide.thumbnailUrl;
+                }
               }}
             />
             <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg border border-zinc-800 text-[10px] font-bold text-zinc-300 flex items-center gap-1.5">

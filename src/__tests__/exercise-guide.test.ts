@@ -103,4 +103,53 @@ describe("Exercise Animation & Form Guide Engine", () => {
     expect(all.length).toBe(Object.keys(EXERCISE_DATABASE).length);
     expect(all.every((e) => Boolean(e.name && e.animationUrl && e.targetMuscle))).toBe(true);
   });
+
+  it("retrieves accurate animations for Leg Press and never defaults to bench press", () => {
+    const guide = getExerciseGuide("Leg Press");
+    expect(guide).toBeDefined();
+    expect(guide.name.toLowerCase()).toContain("leg press");
+    expect(guide.animationUrl).toContain("1463-2Qh2J1e.gif");
+    expect(guide.animationUrl).not.toContain("0025-EIeI8Vf.gif"); // NOT bench press!
+    expect(guide.targetMuscle.toLowerCase()).toContain("quad");
+  });
+
+  it("retrieves accurate animations for Lat Pulldown and Seated Cable Row", () => {
+    const lat = getExerciseGuide("Wide-Grip Lat Pulldown");
+    expect(lat.animationUrl).toContain("0150-eYnzaCm.gif");
+    expect(lat.targetMuscle.toLowerCase()).toContain("lat");
+
+    const row = getExerciseGuide("Seated Cable Row");
+    expect(row.animationUrl).toContain("0861-fUBheHs.gif");
+  });
+
+  it("retrieves accurate animations for Bicep Curls and Hammer Curls", () => {
+    const curl = getExerciseGuide("Dumbbell Bicep Curl");
+    expect(curl.animationUrl).toContain("0285-BU15nH4.gif");
+    expect(curl.targetMuscle.toLowerCase()).toContain("bicep");
+
+    const hammer = getExerciseGuide("Standing Dumbbell Hammer Curl");
+    expect(hammer.animationUrl).toContain("0313-slDvUAU.gif");
+  });
+
+  it("retrieves accurate animations for Leg Extension, Leg Curl, and Calf Raise", () => {
+    const ext = getExerciseGuide("Leg Extension");
+    expect(ext.animationUrl).toContain("0585-my33uHU.gif");
+
+    const curl = getExerciseGuide("Lying Hamstring Leg Curl");
+    expect(curl.animationUrl).toContain("0586-17lJ1kr.gif");
+
+    const calf = getExerciseGuide("Standing Calf Raise");
+    expect(calf.animationUrl).toContain("1372-8ozhUIZ.gif");
+  });
+
+  it("smart category fallback chooses matching movement pattern instead of bench press", () => {
+    const customSquat = getExerciseGuide("Custom Martian Squat 3000");
+    // Should fall back to a squat / leg movement, NOT a bench press!
+    expect(customSquat.animationUrl).not.toContain("0025-EIeI8Vf.gif");
+    expect(customSquat.animationUrl).toContain("0043-qXTaZnJ.gif");
+
+    const customArm = getExerciseGuide("Mega Bicep Blast");
+    expect(customArm.animationUrl).toContain("0285-BU15nH4.gif");
+  });
 });
+
